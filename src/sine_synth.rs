@@ -1,5 +1,5 @@
 use crate::{
-    plugin::{AudioProcessor, Plugin},
+    plugin::{AudioProcessor, Plugin, ProcessOutput, ProcessInput},
     vst_factory::{AudioProcessorInfo, AudioProcessorType},
 };
 use vst3_com::{c_void, sys::GUID};
@@ -13,7 +13,9 @@ impl Plugin for SineSynth {
 }
 
 impl AudioProcessor for SineSynth {
-    fn process(&mut self) { todo!() }
+    fn process<'t, 'u>(&'t mut self, data: &'u ProcessInput<'u>) -> ProcessOutput<'t> {
+        Default::default()
+    }
 }
 
 const PROCESSOR_CID: GUID = GUID {
