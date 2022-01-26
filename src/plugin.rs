@@ -58,7 +58,7 @@ pub struct Event {
     pub event:         EventData,
 }
 
-enum Buffers<'t> {
+pub enum Buffers<'t> {
     F32(&'t [&'t [f32]], &'t [&'t mut [f32]]),
     F64(&'t [&'t [f64]], &'t [&'t mut [f64]]),
 }

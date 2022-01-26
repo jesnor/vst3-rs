@@ -1,5 +1,5 @@
 use crate::utils::{char8_to_16, to_fixed_width_str};
-use std::cell::RefCell;
+use std::cell::Cell;
 use std::ptr::null_mut;
 use vst3_com::{c_void, IID};
 use vst3_sys::base::{
@@ -33,7 +33,7 @@ pub enum AudioProcessorType {
 
 const VST_VERSION_STRING: &str = "VST 3.6.13";
 
-struct FactoryInfo {
+pub struct FactoryInfo {
     pub vendor: String,
     pub url:    String,
     pub email:  String,
@@ -51,7 +51,7 @@ pub struct AudioProcessorInfo {
 pub struct VstPluginFactory {
     info:    PFactoryInfo,
     classes: Vec<(PClassInfo2, Box<dyn Fn() -> *mut c_void>)>,
-    context: RefCell<*mut c_void>,
+    context: Cell<*mut c_void>,
 }
 
 /*pub fn create_audio_processor(
@@ -104,7 +104,10 @@ pub struct VstPluginFactory {
 }*/
 
 impl VstPluginFactory {
-    pub fn new(factory_info: &FactoryInfo, classes: &Vec<(PClassInfo2, Box<dyn Fn() -> *mut c_void>)>) -> *mut c_void {
+    pub fn new(
+        factory_info: &FactoryInfo,
+        classes: Vec<(PClassInfo2, Box<dyn Fn() -> *mut c_void + 'static>)>,
+    ) -> *mut c_void {
         let f = Self::allocate(
             PFactoryInfo {
                 vendor: to_fixed_width_str(&factory_info.vendor),
@@ -112,13 +115,15 @@ impl VstPluginFactory {
                 email:  to_fixed_width_str(&factory_info.email),
                 flags:  FactoryFlags::kComponentNonDiscardable as i32,
             },
-            *classes,
-            RefCell::new(null_mut()),
+            classes,
+            Cell::new(null_mut()),
         );
 
         Box::into_raw(f) as *mut c_void
     }
 }
+
+unsafe fn copy<T>(src: *const T, dst: *mut T) { std::ptr::copy_nonoverlapping(src, dst, 1); }
 
 impl IPluginFactory3 for VstPluginFactory {
     unsafe fn get_class_info_unicode(&self, index: i32, info: *mut PClassInfoW) -> tresult {
@@ -132,7 +137,7 @@ impl IPluginFactory3 for VstPluginFactory {
     }
 
     unsafe fn set_host_context(&self, context: *mut c_void) -> tresult {
-        *self.context.borrow_mut() = context;
+        self.context.set(context);
         kResultOk
     }
 }
@@ -140,7 +145,7 @@ impl IPluginFactory3 for VstPluginFactory {
 impl IPluginFactory2 for VstPluginFactory {
     unsafe fn get_class_info2(&self, index: i32, info: *mut PClassInfo2) -> tresult {
         if let Some((ci, _)) = self.classes.get(index as usize) {
-            *info = *ci;
+            copy(ci, info);
             kResultOk
         }
         else {
@@ -151,7 +156,7 @@ impl IPluginFactory2 for VstPluginFactory {
 
 impl IPluginFactory for VstPluginFactory {
     unsafe fn get_factory_info(&self, info: *mut PFactoryInfo) -> tresult {
-        *info = self.info;
+        copy(&self.info, info);
         kResultOk
     }
 
@@ -172,7 +177,7 @@ impl IPluginFactory for VstPluginFactory {
     }
 
     unsafe fn create_instance(&self, cid: *const IID, _iid: *const IID, obj: *mut *mut c_void) -> tresult {
-        for (ci, f) in self.classes {
+        for (ci, f) in self.classes.iter() {
             if ci.cid == *cid {
                 *obj = f();
                 return kResultOk;

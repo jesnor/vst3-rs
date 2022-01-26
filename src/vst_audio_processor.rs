@@ -46,7 +46,7 @@ struct VstAudioProcessor {
     audio_outputs:        RefCell<Vec<AudioBus>>,
     gain:                 Cell<f64>,
     bypass:               Cell<bool>,
-    context:              RefCell<*mut c_void>,
+    context:              Cell<*mut c_void>,
 }
 
 impl VstAudioProcessor {
@@ -109,7 +109,7 @@ impl IComponent for VstAudioProcessor {
 
         match type_ {
             0 => {
-                let buses = if dir == 0 { self.audio_inputs } else { self.audio_outputs };
+                let buses = if dir == 0 { &self.audio_inputs } else { &self.audio_outputs };
 
                 if let Some(bus) = buses.borrow().get(index as usize) {
                     wstrcpy(&bus.name, (*info).name.as_mut_ptr());
@@ -134,10 +134,10 @@ impl IComponent for VstAudioProcessor {
     unsafe fn activate_bus(&self, type_: MediaType, dir: BusDirection, index: i32, state: TBool) -> tresult {
         match type_ {
             0 => {
-                let buses = if dir == 0 { self.audio_inputs } else { self.audio_outputs };
+                let buses = if dir == 0 { &self.audio_inputs } else { &self.audio_outputs };
 
-                if let Some(bus) = buses.borrow().get(index as usize) {
-                    buses.borrow_mut()[index as usize].active = state != 0;
+                if let Some(bus) = buses.borrow_mut().get_mut(index as usize) {
+                    bus.active = state != 0;
                     kResultTrue
                 }
                 else {
@@ -198,11 +198,11 @@ impl IComponent for VstAudioProcessor {
 
 impl IPluginBase for VstAudioProcessor {
     unsafe fn initialize(&self, context: *mut c_void) -> tresult {
-        if !self.context.borrow().is_null() {
+        if self.context.get().is_null() {
             return kResultFalse;
         }
 
-        *self.context.borrow_mut() = context;
+        self.context.set(context);
         self.add_audio_input("Stereo In", 3);
         self.add_audio_output("Stereo Out", 3);
         kResultOk
@@ -211,7 +211,7 @@ impl IPluginBase for VstAudioProcessor {
     unsafe fn terminate(&self) -> tresult {
         self.audio_inputs.borrow_mut().clear();
         self.audio_outputs.borrow_mut().clear();
-        *self.context.borrow_mut() = null_mut();
+        self.context.set(null_mut());
         kResultOk
     }
 }
@@ -226,8 +226,9 @@ impl IAudioProcessor for VstAudioProcessor {
     ) -> tresult {
         kResultFalse
     }
+
     unsafe fn get_bus_arrangement(&self, dir: BusDirection, index: i32, arr: *mut SpeakerArrangement) -> tresult {
-        let buses = if dir == 0 { self.audio_inputs } else { self.audio_outputs }.borrow();
+        let buses = if dir == 0 { &self.audio_inputs } else { &self.audio_outputs }.borrow();
 
         if let Some(bus) = buses.get(index as usize) {
             *arr = bus.speaker_arr;
@@ -314,11 +315,11 @@ impl IAudioProcessor for VstAudioProcessor {
 
         if (*(*data).inputs).silence_flags != 0 {
             (*(*data).outputs).silence_flags = (*(*data).inputs).silence_flags;
-        
+
             for i in 0..num_channels as isize {
                 write_bytes(*out_.offset(i), 0, sample_frames_size);
             }
-            
+
             return kResultOk;
         }
 

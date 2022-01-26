@@ -1,5 +1,7 @@
+use std::ptr::null_mut;
+
 use crate::{
-    plugin::{AudioProcessor, Plugin, ProcessOutput, ProcessInput},
+    plugin::{AudioProcessor, AudioProcessorFactory, Plugin, PluginFactory, ProcessInput, ProcessOutput},
     vst_factory::{AudioProcessorInfo, AudioProcessorType},
 };
 use vst3_com::{c_void, sys::GUID};
@@ -13,9 +15,7 @@ impl Plugin for SineSynth {
 }
 
 impl AudioProcessor for SineSynth {
-    fn process<'t, 'u>(&'t mut self, data: &'u ProcessInput<'u>) -> ProcessOutput<'t> {
-        Default::default()
-    }
+    fn process<'t, 'u>(&'t mut self, data: &'u ProcessInput<'u>) -> ProcessOutput<'t> { Default::default() }
 }
 
 const PROCESSOR_CID: GUID = GUID {
@@ -30,20 +30,31 @@ const CONTROLLER_CID: GUID = GUID {
     ],
 };
 
+struct SineSynthFactory;
+
+impl PluginFactory for SineSynthFactory {
+    fn create_controller(&self) -> Box<dyn crate::plugin::EditController> { todo!() }
+}
+
+impl AudioProcessorFactory for SineSynthFactory {
+    fn create_audio_processor(&self) -> Box<dyn AudioProcessor> { todo!() }
+}
+
 #[no_mangle]
 #[allow(non_snake_case, clippy::missing_safety_doc)]
 pub unsafe extern "system" fn GetPluginFactory() -> *mut c_void {
-    let mut f = Factory::new("My Inc.", "http://www.url.com/test", "sune@sven.se");
+    /*    let mut f = Factory::new("My Inc.", "http://www.url.com/test", "sune@sven.se");
 
-    let api = AudioProcessorInfo {
-        name:                  "Sine Synth".into(),
-        version:               "v0.1.0".into(),
-        typ:                   AudioProcessorType::Synth,
-        is_distributable:      true,
-        simple_mode_supported: false,
-    };
+     let api = AudioProcessorInfo {
+         name:                  "Sine Synth".into(),
+         version:               "v0.1.0".into(),
+         typ:                   AudioProcessorType::Synth,
+         is_distributable:      true,
+         simple_mode_supported: false,
+     };
 
-    f.add_audio_processor(&PROCESSOR_CID, &api, || Box::new(SineSynth {}));
-    f.add_edit_controller(&CONTROLLER_CID, api.name + " Controller", api.version, || Box::new(SineSynth {}));
-    Box::into_raw(f) as *mut c_void
+     f.add_audio_processor(&PROCESSOR_CID, &api, || Box::new(SineSynth {}));
+     f.add_edit_controller(&CONTROLLER_CID, api.name + " Controller", api.version, || Box::new(SineSynth {}));
+    Box::into_raw(f) as *mut c_void*/
+    null_mut()
 }
