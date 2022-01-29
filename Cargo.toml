@@ -12,3 +12,5 @@ widestring = "0.5.1"
 vst3-sys = { git = "https://github.com/RustAudio/vst3-sys" }
 vst3-com = { git = "https://github.com/RustAudio/vst3-sys" }
 # vst3-com = { path = "../vst3-sys/com" }
+log = "0.4.8"
+flexi_logger = "0.15.2"

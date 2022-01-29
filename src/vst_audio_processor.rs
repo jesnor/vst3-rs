@@ -1,20 +1,48 @@
-use crate::plugin::AudioProcessor;
+use crate::plugin::{
+    AudioProcessor, Event, EventData, InBus, InChannel, OutBus, OutChannel, ParameterId, ParameterPoint, ProcessInput,
+    ProcessOutput,
+};
 use crate::utils::wstrcpy;
+use core::slice;
+use log::info;
 use std::cell::{Cell, RefCell};
-use std::intrinsics::{copy_nonoverlapping, write_bytes};
+use std::collections::HashMap;
 use std::mem;
 use std::ptr::null_mut;
 use vst3_com::{c_void, ComPtr, IID};
 use vst3_sys::base::{kInvalidArgument, kNotImplemented, kResultTrue, IBStream, TBool};
 use vst3_sys::vst::{
-    BusDirection, BusInfo, BusType, IEventList, IParamValueQueue, IParameterChanges, IoMode, MediaType, ProcessData,
-    ProcessSetup, RoutingInfo, SpeakerArrangement,
+    BusDirection, BusInfo, BusType, IEventList, IParamValueQueue, IParameterChanges, IoMode, MediaType, ProcessModes,
+    ProcessSetup, RoutingInfo, SpeakerArrangement, SymbolicSampleSizes,
 };
 use vst3_sys::VST3;
 use vst3_sys::{
     base::{kResultFalse, kResultOk, tresult, IPluginBase},
     vst::{IAudioProcessor, IComponent, K_SAMPLE32, K_SAMPLE64},
 };
+
+unsafe fn to_plugin_event(e: &vst3_sys::vst::Event) -> Option<Event> {
+    let t = match e.type_ {
+        0 => Some(EventData::NoteOn(e.event.note_on)),
+        1 => Some(EventData::NoteOff(e.event.note_off)),
+        2 => Some(EventData::Data(e.event.data)),
+        3 => Some(EventData::PolyPressure(e.event.poly_pressure)),
+        4 => Some(EventData::NoteExpressionValue(e.event.note_expression_value)),
+        5 => Some(EventData::NoteExpressionText(e.event.note_expression_text)),
+        6 => Some(EventData::Chord(e.event.chord)),
+        7 => Some(EventData::Scale(e.event.scale)),
+        65535 => Some(EventData::LegacyMidiCcOut(e.event.legacy_midi_cc_out)),
+        _ => None,
+    };
+
+    t.map(|event| Event {
+        bus_index: e.bus_index,
+        sample_offset: e.sample_offset,
+        ppq_position: e.ppq_position,
+        flags: e.flags,
+        event,
+    })
+}
 
 pub struct AudioBus {
     name:        String,
@@ -37,11 +65,11 @@ fn get_channel_count(arr: SpeakerArrangement) -> i32 {
 }
 
 #[VST3(implements(IComponent, IAudioProcessor, IPluginBase))]
-struct VstAudioProcessor {
+pub struct VstAudioProcessor {
     controller_cid:       IID,
     processor:            Box<dyn AudioProcessor>,
     current_process_mode: Cell<i32>,
-    process_setup:        RefCell<ProcessSetup>,
+    process_setup:        Cell<ProcessSetup>,
     audio_inputs:         RefCell<Vec<AudioBus>>,
     audio_outputs:        RefCell<Vec<AudioBus>>,
     gain:                 Cell<f64>,
@@ -50,12 +78,26 @@ struct VstAudioProcessor {
 }
 
 impl VstAudioProcessor {
+    pub fn new(controller_cid: IID, processor: Box<dyn AudioProcessor>) -> Box<Self> {
+        Self::allocate(
+            controller_cid,
+            processor,
+            Cell::default(),
+            Cell::default(),
+            RefCell::default(),
+            RefCell::default(),
+            Cell::default(),
+            Cell::default(),
+            Cell::new(null_mut()),
+        )
+    }
+
     pub unsafe fn setup_processing_ae(&self, new_setup: *const ProcessSetup) -> tresult {
         if self.can_process_sample_size((*new_setup).symbolic_sample_size) != kResultTrue {
             return kResultFalse;
         }
 
-        *self.process_setup.borrow_mut() = (*new_setup).clone();
+        self.process_setup.set(*new_setup);
         kResultOk
     }
 
@@ -86,13 +128,19 @@ impl VstAudioProcessor {
 
 impl IComponent for VstAudioProcessor {
     unsafe fn get_controller_class_id(&self, tuid: *mut IID) -> tresult {
+        info!("IComponent::get_controller_class_id");
         *tuid = self.controller_cid;
         kResultOk
     }
 
-    unsafe fn set_io_mode(&self, _mode: IoMode) -> tresult { kNotImplemented }
+    unsafe fn set_io_mode(&self, _mode: IoMode) -> tresult {
+        info!("IComponent::set_io_mode");
+        kNotImplemented
+    }
 
     unsafe fn get_bus_count(&self, type_: MediaType, dir: BusDirection) -> i32 {
+        info!("IComponent::get_bus_count");
+
         match type_ {
             0 => match dir {
                 0 => self.audio_inputs.borrow().len() as i32,
@@ -104,6 +152,7 @@ impl IComponent for VstAudioProcessor {
     }
 
     unsafe fn get_bus_info(&self, type_: MediaType, dir: BusDirection, index: i32, info: *mut BusInfo) -> tresult {
+        info!("IComponent::get_bus_info");
         (*info).media_type = type_;
         (*info).direction = dir;
 
@@ -128,10 +177,13 @@ impl IComponent for VstAudioProcessor {
     }
 
     unsafe fn get_routing_info(&self, _in_info: *mut RoutingInfo, _out_info: *mut RoutingInfo) -> tresult {
+        info!("IComponent::get_routing_info");
         kNotImplemented
     }
 
     unsafe fn activate_bus(&self, type_: MediaType, dir: BusDirection, index: i32, state: TBool) -> tresult {
+        info!("IComponent::activate_bus");
+
         match type_ {
             0 => {
                 let buses = if dir == 0 { &self.audio_inputs } else { &self.audio_outputs };
@@ -149,9 +201,14 @@ impl IComponent for VstAudioProcessor {
         }
     }
 
-    unsafe fn set_active(&self, _state: TBool) -> tresult { kResultOk }
+    unsafe fn set_active(&self, _state: TBool) -> tresult {
+        info!("IComponent::set_active");
+        kResultOk
+    }
 
     unsafe fn set_state(&self, state: *mut c_void) -> tresult {
+        info!("IComponent::set_state");
+
         if state.is_null() {
             return kResultFalse;
         }
@@ -175,6 +232,8 @@ impl IComponent for VstAudioProcessor {
     }
 
     unsafe fn get_state(&self, state: *mut c_void) -> tresult {
+        info!("IComponent::get_state");
+
         if state.is_null() {
             return kResultFalse;
         }
@@ -198,7 +257,9 @@ impl IComponent for VstAudioProcessor {
 
 impl IPluginBase for VstAudioProcessor {
     unsafe fn initialize(&self, context: *mut c_void) -> tresult {
-        if self.context.get().is_null() {
+        info!("IPluginBase::initialize audio");
+
+        if !self.context.get().is_null() {
             return kResultFalse;
         }
 
@@ -209,6 +270,7 @@ impl IPluginBase for VstAudioProcessor {
     }
 
     unsafe fn terminate(&self) -> tresult {
+        info!("IPluginBase::terminate audio");
         self.audio_inputs.borrow_mut().clear();
         self.audio_outputs.borrow_mut().clear();
         self.context.set(null_mut());
@@ -224,10 +286,12 @@ impl IAudioProcessor for VstAudioProcessor {
         _outputs: *mut SpeakerArrangement,
         _num_outs: i32,
     ) -> tresult {
+        info!("IAudioProcessor::set_bus_arrangements");
         kResultFalse
     }
 
     unsafe fn get_bus_arrangement(&self, dir: BusDirection, index: i32, arr: *mut SpeakerArrangement) -> tresult {
+        info!("IAudioProcessor::get_bus_arrangement");
         let buses = if dir == 0 { &self.audio_inputs } else { &self.audio_outputs }.borrow();
 
         if let Some(bus) = buses.get(index as usize) {
@@ -246,122 +310,177 @@ impl IAudioProcessor for VstAudioProcessor {
         }
     }
 
-    unsafe fn get_latency_samples(&self) -> u32 { 0 }
+    unsafe fn get_latency_samples(&self) -> u32 {
+        info!("IAudioProcessor::get_latency_samples");
+        0
+    }
 
     unsafe fn setup_processing(&self, setup: *const ProcessSetup) -> tresult {
+        info!("IAudioProcessor::setup_processing");
         self.current_process_mode.set((*setup).process_mode);
         self.setup_processing_ae(setup)
     }
 
-    unsafe fn set_processing(&self, _state: TBool) -> tresult { kNotImplemented }
-
-    unsafe fn process(&self, data: *mut ProcessData) -> tresult {
-        let param_changes = &(*data).input_param_changes;
-
-        if let Some(param_changes) = param_changes.upgrade() {
-            let num_params_changed = param_changes.get_parameter_count();
-
-            for i in 0..num_params_changed {
-                let param_queue = param_changes.get_parameter_data(i);
-
-                if let Some(param_queue) = param_queue.upgrade() {
-                    let mut value = 0.0;
-                    let mut sample_offset = 0;
-                    let num_points = param_queue.get_point_count();
-
-                    match param_queue.get_parameter_id() {
-                        0 => {
-                            if param_queue.get_point(num_points - 1, &mut sample_offset as *mut _, &mut value as *mut _) ==
-                                kResultTrue
-                            {
-                                self.gain.set(value);
-                            }
-                        }
-
-                        1 => {
-                            if param_queue.get_point(num_points - 1, &mut sample_offset as *mut _, &mut value as *mut _) ==
-                                kResultTrue
-                            {
-                                self.bypass.set(value > 0.5);
-                            }
-                        }
-
-                        _ => (),
-                    }
-                }
-            }
-        }
-
-        if let Some(input_events) = (*data).input_events.upgrade() {
-            let num_events = input_events.get_event_count();
-        }
-
-        if (*data).num_inputs == 0 && (*data).num_outputs == 0 {
-            return kResultOk;
-        }
-
-        let num_channels = (*(*data).inputs).num_channels;
-        let num_samples = (*data).num_samples;
-        let in_ = (*(*data).inputs).buffers;
-        let out_ = (*(*data).outputs).buffers;
-
-        let sample_frames_size = {
-            match self.process_setup.borrow().symbolic_sample_size {
-                K_SAMPLE32 => (*data).num_samples as usize * mem::size_of::<f32>(),
-                K_SAMPLE64 => (*data).num_samples as usize * mem::size_of::<f64>(),
-                _ => unreachable!(),
-            }
-        };
-
-        if (*(*data).inputs).silence_flags != 0 {
-            (*(*data).outputs).silence_flags = (*(*data).inputs).silence_flags;
-
-            for i in 0..num_channels as isize {
-                write_bytes(*out_.offset(i), 0, sample_frames_size);
-            }
-
-            return kResultOk;
-        }
-
-        (*(*data).outputs).silence_flags = 0;
-
-        if self.bypass.get() {
-            for i in 0..num_channels as isize {
-                if *in_.offset(i) != *out_.offset(i) {
-                    copy_nonoverlapping(*in_.offset(i) as *const c_void, *out_.offset(i), sample_frames_size);
-                }
-            }
-        }
-        else {
-            match self.process_setup.borrow().symbolic_sample_size {
-                K_SAMPLE32 => {
-                    for i in 0..num_channels as isize {
-                        let channel_in = *in_.offset(i) as *const f32;
-                        let channel_out = *out_.offset(i) as *mut f32;
-
-                        for j in 0..num_samples as isize {
-                            *channel_out.offset(j) = *channel_in.offset(j) * self.gain.get() as f32;
-                        }
-                    }
-                }
-
-                K_SAMPLE64 => {
-                    for i in 0..num_channels as isize {
-                        let channel_in = *in_.offset(i) as *const f64;
-                        let channel_out = *out_.offset(i) as *mut f64;
-
-                        for j in 0..num_samples as isize {
-                            *channel_out.offset(j) = *channel_in.offset(j) * self.gain.get();
-                        }
-                    }
-                }
-
-                _ => unreachable!(),
-            }
-        }
-
-        kResultOk
+    unsafe fn set_processing(&self, _state: TBool) -> tresult {
+        info!("IAudioProcessor::set_processing");
+        kNotImplemented
     }
 
-    unsafe fn get_tail_samples(&self) -> u32 { 0 }
+    unsafe fn process(&self, data: *mut vst3_sys::vst::ProcessData) -> tresult {
+        unsafe fn create_data<'t, T>(
+            data: &vst3_sys::vst::ProcessData,
+        ) -> Option<(ProcessInput<'t, T>, ProcessOutput<'t, T>)> {
+            if data.num_inputs == 0 && data.num_outputs == 0 {
+                return None;
+            }
+
+            let process_mode = match data.process_mode {
+                0 => ProcessModes::kOffline,
+                1 => ProcessModes::kPrefetch,
+                2 => ProcessModes::kRealtime,
+                _ => return None,
+            };
+
+            let sample_size = match data.symbolic_sample_size {
+                0 => SymbolicSampleSizes::kSample32,
+                1 => SymbolicSampleSizes::kSample64,
+                _ => return None,
+            };
+
+            if let Some(ipc) = data.input_param_changes.upgrade() {
+                let param_count = ipc.get_parameter_count();
+
+                let mut param_changes: HashMap<ParameterId, Vec<ParameterPoint>> =
+                    HashMap::with_capacity(param_count as usize);
+
+                // Convert input parameter changes
+                for i in 0..ipc.get_parameter_count() {
+                    let param_queue = ipc.get_parameter_data(i);
+
+                    if let Some(param_queue) = param_queue.upgrade() {
+                        let point_count = param_queue.get_point_count();
+
+                        let v = param_changes
+                            .entry(param_queue.get_parameter_id())
+                            .or_insert_with(|| Vec::with_capacity(point_count as usize));
+
+                        for j in 0..point_count {
+                            let mut value = 0.0;
+                            let mut sample_offset = 0;
+
+                            if param_queue.get_point(j, &mut sample_offset as *mut _, &mut value as *mut _) != kResultOk
+                            {
+                                return None;
+                            }
+
+                            v.push(ParameterPoint { sample_offset, value });
+                        }
+                    }
+                    else {
+                        return None;
+                    }
+                }
+
+                if let Some(ie) = data.input_events.upgrade() {
+                    let ec = ie.get_event_count();
+                    let mut events = Vec::with_capacity(ec as usize);
+
+                    // Convert input events
+                    for i in 0..ec {
+                        let mut e = vst3_sys::vst::Event {
+                            bus_index:     0,
+                            sample_offset: 0,
+                            ppq_position:  0.0,
+                            flags:         0,
+                            type_:         0,
+                            event:         vst3_sys::vst::EventData {
+                                note_on: vst3_sys::vst::NoteOnEvent {
+                                    channel:  0,
+                                    pitch:    0,
+                                    tuning:   0f32,
+                                    velocity: 0f32,
+                                    length:   0,
+                                    note_id:  0,
+                                },
+                            },
+                        };
+
+                        if ie.get_event(i, &mut e as *mut _) != kResultOk {
+                            return None;
+                        }
+
+                        match to_plugin_event(&e) {
+                            Some(event) => events.push(event),
+                            _ => return None,
+                        }
+                    }
+
+                    let mut input_buses: Vec<InBus<'t, T>> = Vec::new();
+                    let mut output_buses: Vec<OutBus<'t, T>> = Vec::new();
+
+                    for bus in slice::from_raw_parts(data.inputs, data.num_inputs as usize) {
+                        let channels = (0..bus.num_channels)
+                            .map(|ci| {
+                                let b = bus.buffers.offset(ci as isize);
+
+                                InChannel::<'t, T> {
+                                    is_silenced: (bus.silence_flags >> ci) == 1,
+                                    samples:     slice::from_raw_parts(b as *const T, data.num_samples as usize),
+                                }
+                            })
+                            .collect::<Vec<InChannel<'t, T>>>();
+
+                        input_buses.push(InBus { channels });
+                    }
+
+                    for bus in slice::from_raw_parts(data.outputs, data.num_outputs as usize) {
+                        let channels = (0..bus.num_channels)
+                            .map(|ci| {
+                                let b = bus.buffers.offset(ci as isize);
+
+                                OutChannel {
+                                    is_silenced: false,
+                                    samples:     slice::from_raw_parts_mut(b as *mut T, data.num_samples as usize),
+                                }
+                            })
+                            .collect();
+
+                        output_buses.push(OutBus::new(channels));
+                    }
+
+                    let input = ProcessInput {
+                        process_mode,
+                        sample_size,
+                        sample_count: data.num_samples as u32,
+                        buses: input_buses,
+                        param_changes,
+                        events,
+                        context: &*data.context,
+                    };
+
+                    let output = ProcessOutput::new(output_buses);
+                    return Some((input, output));
+                }
+            }
+
+            None
+        }
+
+        let data = &*data;
+
+        if data.symbolic_sample_size == K_SAMPLE32 {
+            if let Some((i, mut o)) = create_data(data) {
+                self.processor.process_f32(&i, &mut o);
+                return kResultOk;
+            }
+        }
+        else if let Some((i, mut o)) = create_data(data) {
+            self.processor.process_f64(&i, &mut o);
+            return kResultOk;
+        }
+
+        kInvalidArgument
+    }
+
+    unsafe fn get_tail_samples(&self) -> u32 { self.processor.get_tail_samples() }
 }

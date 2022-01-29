@@ -1,21 +1,96 @@
-use std::ptr::null_mut;
-
 use crate::{
-    plugin::{AudioProcessor, AudioProcessorFactory, Plugin, PluginFactory, ProcessInput, ProcessOutput},
-    vst_factory::{AudioProcessorInfo, AudioProcessorType},
+    plugin::{AudioProcessor, EditController, Parameter, ParameterValue, Plugin, ProcessInput, ProcessOutput},
+    vst_factory::{AudioProcessorInfo, AudioProcessorType, FactoryInfo, VstPluginFactory},
 };
+use flexi_logger::{DeferredNow, Logger, Record};
+use log::info;
+use std::{cell::Cell, f64::consts::PI};
 use vst3_com::{c_void, sys::GUID};
 
-struct SineSynth {}
-
-impl Plugin for SineSynth {
-    fn initialize(&mut self) { todo!() }
-
-    fn terminate(&mut self) { todo!() }
+#[derive(Default, Clone)]
+struct SineSynth {
+    pos: Cell<f64>,
 }
 
+impl SineSynth {
+    fn do_process<'t, T>(
+        &self,
+        input: &'t ProcessInput<'t, T>,
+        output: &'t mut ProcessOutput<'t, T>,
+        f: impl Fn(f64) -> T,
+    ) {
+        let s = self.pos.get();
+        let c = 440.0 * 2.0 * PI / input.context.sample_rate;
+
+        for bus in output.buses().iter_mut() {
+            for channel in bus.channels().iter_mut() {
+                channel.is_silenced = false;
+
+                for (i, sample) in channel.samples.iter_mut().enumerate() {
+                    let v = 0.5 * (c * (s + i as f64)).sin();
+                    *sample = f(v);
+                }
+            }
+        }
+
+        let ns = s + c * input.sample_count as f64;
+        self.pos.set(ns.fract());
+    }
+}
+
+impl Plugin for SineSynth {}
+
 impl AudioProcessor for SineSynth {
-    fn process<'t, 'u>(&'t mut self, data: &'u ProcessInput<'u>) -> ProcessOutput<'t> { Default::default() }
+    fn process_f32<'t>(&self, input: &'t ProcessInput<'t, f32>, output: &'t mut ProcessOutput<'t, f32>) {
+        self.do_process(input, output, |v| v as f32)
+    }
+
+    fn process_f64<'t>(&self, input: &'t ProcessInput<'t, f64>, output: &'t mut ProcessOutput<'t, f64>) {
+        self.do_process(input, output, |v| v)
+    }
+}
+
+struct SineSynthController {
+    params: Vec<Parameter>,
+}
+
+impl SineSynthController {
+    fn new() -> Self {
+        Self {
+            params: vec![Parameter {
+                id: 1,
+                title: "Gainer".into(),
+                short_title: "Gn".into(),
+                units: "%".into(),
+                step_count: 0,
+                default_normalized_value: 0.0,
+                unit_id: 0,
+
+                flags: crate::plugin::ParameterFlags {
+                    can_automate:      true,
+                    is_read_only:      false,
+                    is_wrap_around:    false,
+                    is_list:           false,
+                    is_program_change: false,
+                    is_bypass:         false,
+                },
+
+                value_to_string:           Box::new(|value| format!("{} %", (value * 100.0) as i32)),
+                string_to_value:           Box::new(|_| None),
+                normalized_to_plain_value: Box::new(|value| value),
+                plain_to_normalized_value: Box::new(|value| value),
+                value:                     Default::default(),
+            }],
+        }
+    }
+}
+
+impl Plugin for SineSynthController {}
+
+impl EditController for SineSynthController {
+    fn parameters(&self) -> &[Parameter] { &self.params }
+    fn get_param_normalized(&self, param: &Parameter) -> ParameterValue { param.value.get() }
+    fn set_param_normalized(&self, param: &Parameter, value: ParameterValue) { param.value.set(value) }
 }
 
 const PROCESSOR_CID: GUID = GUID {
@@ -30,31 +105,54 @@ const CONTROLLER_CID: GUID = GUID {
     ],
 };
 
-struct SineSynthFactory;
+static mut INIT_LOGGER: bool = false;
 
-impl PluginFactory for SineSynthFactory {
-    fn create_controller(&self) -> Box<dyn crate::plugin::EditController> { todo!() }
-}
-
-impl AudioProcessorFactory for SineSynthFactory {
-    fn create_audio_processor(&self) -> Box<dyn AudioProcessor> { todo!() }
+pub fn opt_format(w: &mut dyn std::io::Write, now: &mut DeferredNow, record: &Record) -> Result<(), std::io::Error> {
+    write!(
+        w,
+        "[{}] {} [{}:{}] {}",
+        now.now().format("%Y-%m-%d %H:%M:%S%.6f %:z"),
+        record.level(),
+        record.file().unwrap_or("<unnamed>"),
+        record.line().unwrap_or(0),
+        &record.args()
+    )
 }
 
 #[no_mangle]
 #[allow(non_snake_case, clippy::missing_safety_doc)]
 pub unsafe extern "system" fn GetPluginFactory() -> *mut c_void {
-    /*    let mut f = Factory::new("My Inc.", "http://www.url.com/test", "sune@sven.se");
+    if !INIT_LOGGER {
+        let init = Logger::with_env_or_str("info").log_to_file().directory("/vstlog").format(opt_format).start();
 
-     let api = AudioProcessorInfo {
-         name:                  "Sine Synth".into(),
-         version:               "v0.1.0".into(),
-         typ:                   AudioProcessorType::Synth,
-         is_distributable:      true,
-         simple_mode_supported: false,
-     };
+        if init.is_ok() {
+            info!("Started logger...");
+        }
 
-     f.add_audio_processor(&PROCESSOR_CID, &api, || Box::new(SineSynth {}));
-     f.add_edit_controller(&CONTROLLER_CID, api.name + " Controller", api.version, || Box::new(SineSynth {}));
-    Box::into_raw(f) as *mut c_void*/
-    null_mut()
+        INIT_LOGGER = true;
+    }
+
+    let mut f = VstPluginFactory::new(&FactoryInfo {
+        vendor: "My Inc. 2".into(),
+        url:    "http://www.url.com/test".into(),
+        email:  "sune@sven.se".into(),
+    });
+
+    let api = AudioProcessorInfo {
+        name:                  "Sine Synth".into(),
+        version:               "v0.1.0".into(),
+        typ:                   AudioProcessorType::Synth,
+        is_distributable:      true,
+        simple_mode_supported: false,
+    };
+
+    f.add_audio_processor_with_controller_factories(
+        PROCESSOR_CID,
+        CONTROLLER_CID,
+        &api,
+        || Box::new(SineSynth::default()),
+        || Box::new(SineSynthController::new()),
+    );
+
+    Box::into_raw(f) as *mut c_void
 }

@@ -1,8 +1,11 @@
+#![allow(dead_code)]
+
 mod plugin;
 mod sine_synth;
 mod utils;
 mod vst_audio_processor;
 mod vst_categories;
+mod vst_edit_controller;
 mod vst_factory;
 
 use crate::utils::wstrcpy;
@@ -73,9 +76,11 @@ impl IEditController for AGainController {
 
         kResultOk
     }
+
     unsafe fn set_state(&self, _state: *mut c_void) -> tresult { kResultOk }
     unsafe fn get_state(&self, _state: *mut c_void) -> tresult { kResultOk }
     unsafe fn get_parameter_count(&self) -> i32 { self.parameters.borrow().0.len() as i32 }
+
     unsafe fn get_parameter_info(&self, param_index: i32, info: *mut ParameterInfo) -> tresult {
         if param_index >= 0 && param_index < self.parameters.borrow().0.len() as i32 {
             *info = self.parameters.borrow().0[param_index as usize].0;
@@ -84,6 +89,7 @@ impl IEditController for AGainController {
 
         kResultFalse
     }
+
     unsafe fn get_param_string_by_value(&self, id: u32, value_normalized: f64, string: *mut TChar) -> tresult {
         match id {
             0 => {
@@ -95,6 +101,7 @@ impl IEditController for AGainController {
             _ => kResultFalse,
         }
     }
+
     unsafe fn get_param_value_by_string(
         &self,
         _id: u32,
@@ -103,6 +110,7 @@ impl IEditController for AGainController {
     ) -> tresult {
         kResultFalse
     }
+
     unsafe fn normalized_param_to_plain(&self, id: u32, value_normalized: f64) -> f64 {
         match id {
             0 => value_normalized * 100.0,
@@ -110,6 +118,7 @@ impl IEditController for AGainController {
             _ => unreachable!(),
         }
     }
+
     unsafe fn plain_param_to_normalized(&self, id: u32, plain_value: f64) -> f64 {
         match id {
             0 => plain_value / 100.0,
@@ -117,6 +126,7 @@ impl IEditController for AGainController {
             _ => unreachable!(),
         }
     }
+
     unsafe fn get_param_normalized(&self, id: u32) -> f64 {
         match id {
             0 => self.parameters.borrow().0[0].1,
@@ -124,6 +134,7 @@ impl IEditController for AGainController {
             _ => unreachable!(),
         }
     }
+
     unsafe fn set_param_normalized(&self, id: u32, value: f64) -> tresult {
         match id {
             0 => {
@@ -137,6 +148,7 @@ impl IEditController for AGainController {
             _ => kResultFalse,
         }
     }
+
     unsafe fn set_component_handler(&self, handler: *mut c_void) -> tresult {
         if self.component_handler.borrow().0 == handler {
             return kResultTrue;
@@ -158,6 +170,7 @@ impl IEditController for AGainController {
 
         kResultTrue
     }
+
     unsafe fn create_view(&self, _name: FIDString) -> *mut c_void { null_mut() }
 }
 
@@ -279,7 +292,7 @@ impl IUnitInfo for AGainController {
 }
 
 #[no_mangle]
-#[allow(non_snake_case)]
+#[allow(non_snake_case, clippy::missing_safety_doc)]
 pub unsafe extern "system" fn InitDll() -> bool { true }
 
 #[no_mangle]
