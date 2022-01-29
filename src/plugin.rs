@@ -1,5 +1,4 @@
-use std::{cell::Cell, collections::HashMap};
-
+use std::collections::HashMap;
 use vst3_sys::vst::{
     ChordEvent, DataEvent, LegacyMidiCCOutEvent, NoteExpressionTextEvent, NoteExpressionValueEvent, NoteOffEvent,
     NoteOnEvent, PolyPressureEvent, ProcessContext, ProcessModes, ScaleEvent, SymbolicSampleSizes,
@@ -85,6 +84,12 @@ pub struct ProcessInput<'t, T> {
     pub context:       &'t ProcessContext,
 }
 
+impl<'t, T> ProcessInput<'t, T> {
+    pub fn get_last_param_value(&self, id: ParameterId) -> Option<ParameterValue> {
+        self.param_changes.get(&id).map(|v| v.last().map(|p| p.value)).flatten()
+    }
+}
+
 pub struct ProcessOutput<'t, T> {
     buses:             Vec<OutBus<'t, T>>,
     pub param_changes: HashMap<ParameterId, Vec<ParameterPoint>>,
@@ -128,16 +133,48 @@ pub struct Parameter {
     pub default_normalized_value: ParameterValue,
     pub unit_id: i32,
     pub flags: ParameterFlags,
-    pub value_to_string: Box<dyn Fn(ParameterValue) -> String>,
-    pub string_to_value: Box<dyn Fn(&str) -> Option<ParameterValue>>,
-    pub normalized_to_plain_value: Box<dyn Fn(ParameterValue) -> ParameterValue>,
-    pub plain_to_normalized_value: Box<dyn Fn(ParameterValue) -> ParameterValue>,
-    pub value: Cell<ParameterValue>,
+    pub value_to_string: Box<dyn Fn(ParameterValue) -> String + Sync>,
+    pub string_to_value: Box<dyn Fn(&str) -> Option<ParameterValue> + Sync>,
+    pub normalized_to_plain_value: Box<dyn Fn(ParameterValue) -> ParameterValue + Sync>,
+    pub plain_to_normalized_value: Box<dyn Fn(ParameterValue) -> ParameterValue + Sync>,
+}
+
+impl Parameter {
+    pub fn new_linear(
+        id: ParameterId,
+        title: &str,
+        units: &str,
+        default_value: ParameterValue,
+        min: ParameterValue,
+        max: ParameterValue,
+    ) -> Self {
+        let to_norm = move |v| (v - min) / (max - min);
+        let from_norm = move |v| v * (max - min) + min;
+        let units_string = units.to_owned();
+
+        Self {
+            id,
+            title: title.into(),
+            short_title: title.into(),
+            units: units.into(),
+            step_count: 0,
+            default_normalized_value: to_norm(default_value),
+            unit_id: 0,
+            flags: ParameterFlags {
+                can_automate: true,
+                ..Default::default()
+            },
+            value_to_string: Box::new(move |v| format!("{:.1} {}", from_norm(v), units_string)),
+            string_to_value: Box::new(move |s| s.parse::<ParameterValue>().ok().map(to_norm)),
+            normalized_to_plain_value: Box::new(from_norm),
+            plain_to_normalized_value: Box::new(to_norm),
+        }
+    }
 }
 
 #[allow(unused_variables)]
 pub trait EditController: Plugin {
-    fn parameters(&self) -> &[Parameter];
+    fn parameters(&self) -> &[&Parameter];
     fn get_param_normalized(&self, param: &Parameter) -> ParameterValue;
     fn set_param_normalized(&self, param: &Parameter, value: ParameterValue);
 

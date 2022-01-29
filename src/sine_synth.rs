@@ -1,15 +1,49 @@
 use crate::{
-    plugin::{AudioProcessor, EditController, Parameter, ParameterValue, Plugin, ProcessInput, ProcessOutput},
+    plugin::{
+        AudioProcessor, EditController, Parameter, ParameterId, ParameterPoint, ParameterValue, Plugin, ProcessInput,
+        ProcessOutput,
+    },
     vst_factory::{AudioProcessorInfo, AudioProcessorType, FactoryInfo, VstPluginFactory},
 };
 use flexi_logger::{DeferredNow, Logger, Record};
 use log::info;
-use std::{cell::Cell, f64::consts::PI};
+use std::{cell::Cell, collections::HashMap, f64::consts::PI};
 use vst3_com::{c_void, sys::GUID};
 
-#[derive(Default, Clone)]
+lazy_static! {
+    static ref GAIN: Parameter = Parameter::new_linear(1, "Gain", "%", 50.0, 0.0, 100.0);
+    static ref FREQ: Parameter = Parameter::new_linear(2, "Freq", "Hz", 400.0, 20.0, 2000.0);
+    static ref PARAMS: Vec<&'static Parameter> = vec![&GAIN, &FREQ];
+}
+
+#[derive(Clone)]
+struct ParameterWithValue {
+    param: &'static Parameter,
+    value: Cell<ParameterValue>,
+}
+
+impl ParameterWithValue {
+    fn new(param: &'static Parameter) -> Self {
+        Self {
+            param,
+            value: param.default_normalized_value.into(),
+        }
+    }
+
+    fn update(&self, param_changes: &HashMap<ParameterId, Vec<ParameterPoint>>) -> ParameterValue {
+        if let Some(v) = param_changes.get(&self.param.id).map(|v| v.last().map(|p| p.value)).flatten() {
+            self.value.set(v);
+        }
+
+        (self.param.normalized_to_plain_value)(self.value.get())
+    }
+}
+
+#[derive(Clone)]
 struct SineSynth {
-    pos: Cell<f64>,
+    pos:  Cell<f64>,
+    gain: ParameterWithValue,
+    freq: ParameterWithValue,
 }
 
 impl SineSynth {
@@ -19,22 +53,34 @@ impl SineSynth {
         output: &'t mut ProcessOutput<'t, T>,
         f: impl Fn(f64) -> T,
     ) {
-        let s = self.pos.get();
-        let c = 440.0 * 2.0 * PI / input.context.sample_rate;
+        let p = self.pos.get();
+        let gain = self.gain.update(&input.param_changes) / 100.0;
+        let freq = self.freq.update(&input.param_changes);
+        let c = freq / input.context.sample_rate;
 
         for bus in output.buses().iter_mut() {
             for channel in bus.channels().iter_mut() {
                 channel.is_silenced = false;
 
                 for (i, sample) in channel.samples.iter_mut().enumerate() {
-                    let v = 0.5 * (c * (s + i as f64)).sin();
+                    let v = gain * (2.0 * PI * (p + c * i as f64)).sin();
                     *sample = f(v);
                 }
             }
         }
 
-        let ns = s + c * input.sample_count as f64;
-        self.pos.set(ns.fract());
+        let np = p + c * input.sample_count as f64;
+        self.pos.set(np.fract());
+    }
+}
+
+impl Default for SineSynth {
+    fn default() -> Self {
+        Self {
+            pos:  Cell::default(),
+            gain: ParameterWithValue::new(&GAIN),
+            freq: ParameterWithValue::new(&FREQ),
+        }
     }
 }
 
@@ -51,36 +97,13 @@ impl AudioProcessor for SineSynth {
 }
 
 struct SineSynthController {
-    params: Vec<Parameter>,
+    param_values: HashMap<ParameterId, Cell<f64>>,
 }
 
 impl SineSynthController {
     fn new() -> Self {
         Self {
-            params: vec![Parameter {
-                id: 1,
-                title: "Gainer".into(),
-                short_title: "Gn".into(),
-                units: "%".into(),
-                step_count: 0,
-                default_normalized_value: 0.0,
-                unit_id: 0,
-
-                flags: crate::plugin::ParameterFlags {
-                    can_automate:      true,
-                    is_read_only:      false,
-                    is_wrap_around:    false,
-                    is_list:           false,
-                    is_program_change: false,
-                    is_bypass:         false,
-                },
-
-                value_to_string:           Box::new(|value| format!("{} %", (value * 100.0) as i32)),
-                string_to_value:           Box::new(|_| None),
-                normalized_to_plain_value: Box::new(|value| value),
-                plain_to_normalized_value: Box::new(|value| value),
-                value:                     Default::default(),
-            }],
+            param_values: PARAMS.iter().map(|p| (p.id, p.default_normalized_value.into())).collect(),
         }
     }
 }
@@ -88,9 +111,17 @@ impl SineSynthController {
 impl Plugin for SineSynthController {}
 
 impl EditController for SineSynthController {
-    fn parameters(&self) -> &[Parameter] { &self.params }
-    fn get_param_normalized(&self, param: &Parameter) -> ParameterValue { param.value.get() }
-    fn set_param_normalized(&self, param: &Parameter, value: ParameterValue) { param.value.set(value) }
+    fn parameters(&self) -> &[&Parameter] { &PARAMS }
+
+    fn get_param_normalized(&self, param: &Parameter) -> ParameterValue {
+        self.param_values.get(&param.id).map(|c| c.get()).unwrap_or_else(|| param.default_normalized_value)
+    }
+
+    fn set_param_normalized(&self, param: &Parameter, value: ParameterValue) {
+        if let Some(c) = self.param_values.get(&param.id) {
+            c.set(value)
+        }
+    }
 }
 
 const PROCESSOR_CID: GUID = GUID {

@@ -8,6 +8,9 @@ mod vst_categories;
 mod vst_edit_controller;
 mod vst_factory;
 
+#[macro_use]
+extern crate lazy_static;
+
 use crate::utils::wstrcpy;
 use std::cell::RefCell;
 use std::mem;

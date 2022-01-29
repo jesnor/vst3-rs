@@ -347,11 +347,12 @@ impl IAudioProcessor for VstAudioProcessor {
                 _ => return None,
             };
 
+            let mut param_changes: HashMap<ParameterId, Vec<ParameterPoint>> = HashMap::new();
+            info!("IAudioProcessor::process::convert_params");
+
             if let Some(ipc) = data.input_param_changes.upgrade() {
                 let param_count = ipc.get_parameter_count();
-
-                let mut param_changes: HashMap<ParameterId, Vec<ParameterPoint>> =
-                    HashMap::with_capacity(param_count as usize);
+                param_changes.reserve(param_count as usize);
 
                 // Convert input parameter changes
                 for i in 0..ipc.get_parameter_count() {
@@ -380,101 +381,104 @@ impl IAudioProcessor for VstAudioProcessor {
                         return None;
                     }
                 }
+            }
 
-                if let Some(ie) = data.input_events.upgrade() {
-                    let ec = ie.get_event_count();
-                    let mut events = Vec::with_capacity(ec as usize);
+            let mut events = Vec::new();
+            info!("IAudioProcessor::process::convert_events");
 
-                    // Convert input events
-                    for i in 0..ec {
-                        let mut e = vst3_sys::vst::Event {
-                            bus_index:     0,
-                            sample_offset: 0,
-                            ppq_position:  0.0,
-                            flags:         0,
-                            type_:         0,
-                            event:         vst3_sys::vst::EventData {
-                                note_on: vst3_sys::vst::NoteOnEvent {
-                                    channel:  0,
-                                    pitch:    0,
-                                    tuning:   0f32,
-                                    velocity: 0f32,
-                                    length:   0,
-                                    note_id:  0,
-                                },
+            if let Some(ie) = data.input_events.upgrade() {
+                let ec = ie.get_event_count();
+                events.reserve(ec as usize);
+
+                // Convert input events
+                for i in 0..ec {
+                    let mut e = vst3_sys::vst::Event {
+                        bus_index:     0,
+                        sample_offset: 0,
+                        ppq_position:  0.0,
+                        flags:         0,
+                        type_:         0,
+                        event:         vst3_sys::vst::EventData {
+                            note_on: vst3_sys::vst::NoteOnEvent {
+                                channel:  0,
+                                pitch:    0,
+                                tuning:   0f32,
+                                velocity: 0f32,
+                                length:   0,
+                                note_id:  0,
                             },
-                        };
-
-                        if ie.get_event(i, &mut e as *mut _) != kResultOk {
-                            return None;
-                        }
-
-                        match to_plugin_event(&e) {
-                            Some(event) => events.push(event),
-                            _ => return None,
-                        }
-                    }
-
-                    let mut input_buses: Vec<InBus<'t, T>> = Vec::new();
-                    let mut output_buses: Vec<OutBus<'t, T>> = Vec::new();
-
-                    for bus in slice::from_raw_parts(data.inputs, data.num_inputs as usize) {
-                        let channels = (0..bus.num_channels)
-                            .map(|ci| {
-                                let b = bus.buffers.offset(ci as isize);
-
-                                InChannel::<'t, T> {
-                                    is_silenced: (bus.silence_flags >> ci) == 1,
-                                    samples:     slice::from_raw_parts(b as *const T, data.num_samples as usize),
-                                }
-                            })
-                            .collect::<Vec<InChannel<'t, T>>>();
-
-                        input_buses.push(InBus { channels });
-                    }
-
-                    for bus in slice::from_raw_parts(data.outputs, data.num_outputs as usize) {
-                        let channels = (0..bus.num_channels)
-                            .map(|ci| {
-                                let b = bus.buffers.offset(ci as isize);
-
-                                OutChannel {
-                                    is_silenced: false,
-                                    samples:     slice::from_raw_parts_mut(b as *mut T, data.num_samples as usize),
-                                }
-                            })
-                            .collect();
-
-                        output_buses.push(OutBus::new(channels));
-                    }
-
-                    let input = ProcessInput {
-                        process_mode,
-                        sample_size,
-                        sample_count: data.num_samples as u32,
-                        buses: input_buses,
-                        param_changes,
-                        events,
-                        context: &*data.context,
+                        },
                     };
 
-                    let output = ProcessOutput::new(output_buses);
-                    return Some((input, output));
+                    if ie.get_event(i, &mut e as *mut _) != kResultOk {
+                        return None;
+                    }
+
+                    match to_plugin_event(&e) {
+                        Some(event) => events.push(event),
+                        _ => return None,
+                    }
                 }
             }
 
-            None
+            let mut input_buses: Vec<InBus<'t, T>> = Vec::new();
+            let mut output_buses: Vec<OutBus<'t, T>> = Vec::new();
+            info!("IAudioProcessor::process::convert_buffers");
+
+            for bus in slice::from_raw_parts(data.inputs, data.num_inputs as usize) {
+                let channels = (0..bus.num_channels)
+                    .map(|ci| {
+                        let b = bus.buffers.offset(ci as isize);
+
+                        InChannel::<'t, T> {
+                            is_silenced: (bus.silence_flags >> ci) == 1,
+                            samples:     slice::from_raw_parts(b as *const T, data.num_samples as usize),
+                        }
+                    })
+                    .collect::<Vec<InChannel<'t, T>>>();
+
+                input_buses.push(InBus { channels });
+            }
+
+            for bus in slice::from_raw_parts(data.outputs, data.num_outputs as usize) {
+                let channels = slice::from_raw_parts_mut(bus.buffers as *mut *mut T, bus.num_channels as usize)
+                    .iter()
+                    .map(|ch| OutChannel {
+                        is_silenced: false,
+                        samples:     slice::from_raw_parts_mut(*ch, data.num_samples as usize),
+                    })
+                    .collect();
+
+                output_buses.push(OutBus::new(channels));
+            }
+
+            let input = ProcessInput {
+                process_mode,
+                sample_size,
+                sample_count: data.num_samples as u32,
+                buses: input_buses,
+                param_changes,
+                events,
+                context: &*data.context,
+            };
+
+            let output = ProcessOutput::new(output_buses);
+            Some((input, output))
         }
 
+        info!("IAudioProcessor::process");
         let data = &*data;
 
         if data.symbolic_sample_size == K_SAMPLE32 {
             if let Some((i, mut o)) = create_data(data) {
+                info!("IAudioProcessor::process::process_f32");
                 self.processor.process_f32(&i, &mut o);
+                info!("IAudioProcessor::process::process_f32 done");
                 return kResultOk;
             }
         }
         else if let Some((i, mut o)) = create_data(data) {
+            info!("IAudioProcessor::process::process_f64");
             self.processor.process_f64(&i, &mut o);
             return kResultOk;
         }
