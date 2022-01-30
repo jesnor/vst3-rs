@@ -1,7 +1,7 @@
 use crate::{
     audio_processor::{AudioProcessor, ProcessInput, ProcessOutput},
     edit_controller::EditController,
-    plugin::Plugin,
+    plugin::{read_parameter_values, write_parameter_values, Parameters, Plugin, State},
     plugin_parameter::{NormalizedParameterValue, ParameterInfo, ParameterValueContainer, ParameterWithValue},
     range::Range,
     vst_factory::{AudioProcessorInfo, AudioProcessorType, FactoryInfo, VstPluginFactory},
@@ -13,10 +13,10 @@ use std::{cell::Cell, f64::consts::PI, rc::Rc};
 use vst3_com::{c_void, sys::GUID};
 
 static GAIN: Lazy<ParameterInfo> =
-    Lazy::new(|| ParameterInfo::new_linear(1, "Gain", "%", 50.0, Range::new(0.0, 100.0)));
+    Lazy::new(|| ParameterInfo::new_linear(1.into(), "Gain", "%", 50.0, Range::new(0.0, 100.0)));
 
 static FREQ: Lazy<ParameterInfo> =
-    Lazy::new(|| ParameterInfo::new_linear(2, "Freq", "Hz", 400.0, Range::new(20.0, 2000.0)));
+    Lazy::new(|| ParameterInfo::new_linear(2.into(), "Freq", "Hz", 400.0, Range::new(20.0, 2000.0)));
 
 static PARAMS: Lazy<Vec<&'static ParameterInfo>> = Lazy::new(|| vec![&GAIN, &FREQ]);
 
@@ -73,6 +73,16 @@ impl Default for SineSynth {
 
 impl Plugin for SineSynth {}
 
+impl State for SineSynth {
+    fn set_state(&self, stream: &mut crate::vst_stream::VstInStream) -> std::io::Result<()> {
+        read_parameter_values(&self.parameter_value_container, stream)
+    }
+
+    fn get_state(&self, stream: &mut crate::vst_stream::VstOutStream) -> std::io::Result<()> {
+        write_parameter_values(&self.parameter_value_container, stream)
+    }
+}
+
 impl AudioProcessor for SineSynth {
     fn process_f32<'t>(&self, input: &'t ProcessInput<'t, f32>, output: &'t mut ProcessOutput<'t, f32>) {
         self.do_process(input, output, |v| v as f32)
@@ -97,17 +107,26 @@ impl SineSynthController {
 
 impl Plugin for SineSynthController {}
 
-impl EditController for SineSynthController {
-    fn get_parameters(&self) -> &[&ParameterInfo] { &PARAMS }
+impl Parameters for SineSynthController {
+    fn get_parameters(&self) -> &[&ParameterInfo] { self.parameter_value_container.get_parameters() }
 
     fn get_normalized_parameter_value(&self, param: &ParameterInfo) -> NormalizedParameterValue {
-        self.parameter_value_container.get_value(param.id).unwrap().get_normalized()
+        self.parameter_value_container.get_normalized_parameter_value(param)
     }
 
     fn set_normalized_parameter_value(&self, param: &ParameterInfo, value: NormalizedParameterValue) {
-        if let Some(v) = self.parameter_value_container.get_value(param.id) {
-            v.set_normalized(value)
-        }
+        self.parameter_value_container.set_normalized_parameter_value(param, value)
+    }
+}
+
+impl State for SineSynthController {
+    fn set_state(&self, _stream: &mut crate::vst_stream::VstInStream) -> std::io::Result<()> { Ok(()) }
+    fn get_state(&self, _stream: &mut crate::vst_stream::VstOutStream) -> std::io::Result<()> { Ok(()) }
+}
+
+impl EditController for SineSynthController {
+    fn set_component_state(&self, stream: &mut crate::vst_stream::VstInStream) -> std::io::Result<()> {
+        read_parameter_values(&self.parameter_value_container, stream)
     }
 }
 

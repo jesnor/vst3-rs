@@ -1,7 +1,9 @@
 use crate::{
-    plugin::Plugin,
+    plugin::Parameters,
+    plugin::{Plugin, State},
     plugin_parameter::{NormalizedParameterValue, ParameterId, ParameterInfo, ParameterValue},
     type_cell::TypeCell,
+    vst_stream::VstInStream,
 };
 
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -44,12 +46,9 @@ pub enum MediaType {
 }
 
 #[allow(unused_variables)]
-pub trait EditController: Plugin {
+pub trait EditController: Plugin + Parameters + State {
     // IEditController methods
-
-    fn get_parameters(&self) -> &[&ParameterInfo];
-    fn get_normalized_parameter_value(&self, param: &ParameterInfo) -> NormalizedParameterValue;
-    fn set_normalized_parameter_value(&self, param: &ParameterInfo, value: NormalizedParameterValue);
+    fn set_component_state(&self, stream: &mut VstInStream) -> std::io::Result<()>;
 
     fn normalized_parameter_value_to_string(&self, param: &ParameterInfo, value: NormalizedParameterValue) -> String {
         format!("{:.1} {}", param.normalized_to_plain_converter.convert(value).get(), param.units)
@@ -61,17 +60,6 @@ pub trait EditController: Plugin {
         value: &str,
     ) -> Option<NormalizedParameterValue> {
         value.parse::<ParameterValue>().ok().map(|v| v.into())
-    }
-
-    /// Should be overridden for performance reasons when there are many parameters
-    fn get_parameter_by_id(&self, id: ParameterId) -> Option<&ParameterInfo> {
-        for p in self.get_parameters() {
-            if p.id == id {
-                return Some(p);
-            }
-        }
-
-        None
     }
 
     // IEditController2 methods

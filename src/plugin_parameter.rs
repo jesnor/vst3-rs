@@ -2,11 +2,16 @@ use std::{cell::Cell, collections::HashMap, rc::Rc};
 
 use crate::{
     converter::{Converter, IsoConverter},
+    plugin::Parameters,
     range::Range,
     type_cell::TypeCell,
 };
 
-pub type ParameterId = u32;
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ParameterIdTag;
+
+pub type ParameterId = TypeCell<ParameterIdTag, u32>;
+
 pub type ParameterValue = f64;
 
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -173,4 +178,18 @@ impl ParameterValueContainer {
 
     pub fn get_value(&self, id: ParameterId) -> Option<&Rc<ParameterWithValue>> { self.id_to_param.get(&id) }
     pub fn clone_value(&self, id: ParameterId) -> Rc<ParameterWithValue> { self.get_value(id).unwrap().clone() }
+}
+
+impl Parameters for ParameterValueContainer {
+    fn get_parameters(&self) -> &[&ParameterInfo] { self.params }
+
+    fn get_normalized_parameter_value(&self, param: &ParameterInfo) -> NormalizedParameterValue {
+        self.get_value(param.id).map(|p| p.get_normalized()).unwrap_or(param.default_normalized_value)
+    }
+
+    fn set_normalized_parameter_value(&self, param: &ParameterInfo, value: NormalizedParameterValue) {
+        if let Some(v) = self.get_value(param.id) {
+            v.set_normalized(value)
+        }
+    }
 }

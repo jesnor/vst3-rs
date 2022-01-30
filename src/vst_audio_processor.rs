@@ -3,11 +3,11 @@ use crate::audio_processor::{
 };
 use crate::plugin_parameter::{ParameterId, ParameterPoint};
 use crate::utils::string_copy_into_i16;
+use crate::vst_stream::{VstInStream, VstOutStream};
 use core::slice;
 use log::info;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
-use std::mem;
 use std::ptr::null_mut;
 use vst3_com::{c_void, ComPtr, IID};
 use vst3_sys::base::{kInvalidArgument, kNotImplemented, kResultTrue, IBStream, TBool};
@@ -213,22 +213,14 @@ impl IComponent for VstAudioProcessor {
             return kResultFalse;
         }
 
-        let state = state as *mut *mut _;
-        let state: ComPtr<dyn IBStream> = ComPtr::new(state);
+        let stream: ComPtr<dyn IBStream> = ComPtr::new(state as *mut *mut _);
 
-        let mut num_bytes_read = 0;
-        let mut saved_gain = 0.0;
-        let mut saved_bypass = false;
-        let gain_ptr = &mut saved_gain as *mut f64 as *mut c_void;
-        let bypass_ptr = &mut saved_bypass as *mut bool as *mut c_void;
-
-        state.read(gain_ptr, mem::size_of::<f64>() as i32, &mut num_bytes_read);
-        state.read(bypass_ptr, mem::size_of::<bool>() as i32, &mut num_bytes_read);
-
-        self.gain.set(saved_gain);
-        self.bypass.set(saved_bypass);
-
-        kResultOk
+        if self.processor.set_state(&mut VstInStream::new(stream)).is_ok() {
+            kResultOk
+        }
+        else {
+            kResultFalse
+        }
     }
 
     unsafe fn get_state(&self, state: *mut c_void) -> tresult {
@@ -238,20 +230,14 @@ impl IComponent for VstAudioProcessor {
             return kResultFalse;
         }
 
-        let state = state as *mut *mut _;
-        let state: ComPtr<dyn IBStream> = ComPtr::new(state);
+        let stream: ComPtr<dyn IBStream> = ComPtr::new(state as *mut *mut _);
 
-        let mut num_bytes_written = 0;
-        let mut gain = self.gain.get();
-        let gain_ptr = &mut gain as *mut f64 as *mut c_void;
-        let mut bypass = self.bypass.get();
-        let bypass_ptr = &mut bypass as *mut bool as *mut c_void;
-
-        state.write(gain_ptr, mem::size_of::<f64>() as i32, &mut num_bytes_written);
-
-        state.write(bypass_ptr, mem::size_of::<bool>() as i32, &mut num_bytes_written);
-
-        kResultOk
+        if self.processor.get_state(&mut VstOutStream::new(stream)).is_ok() {
+            kResultOk
+        }
+        else {
+            kResultFalse
+        }
     }
 }
 
@@ -361,7 +347,7 @@ impl IAudioProcessor for VstAudioProcessor {
                         let point_count = param_queue.get_point_count();
 
                         let v = param_changes
-                            .entry(param_queue.get_parameter_id())
+                            .entry(param_queue.get_parameter_id().into())
                             .or_insert_with(|| Vec::with_capacity(point_count as usize));
 
                         for j in 0..point_count {

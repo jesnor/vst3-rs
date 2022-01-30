@@ -1,13 +1,11 @@
+use crate::{
+    plugin::{Plugin, State},
+    plugin_parameter::{NormalizedParameterValue, ParameterId, ParameterPoint},
+};
 use std::collections::HashMap;
-
 use vst3_sys::vst::{
     ChordEvent, DataEvent, LegacyMidiCCOutEvent, NoteExpressionTextEvent, NoteExpressionValueEvent, NoteOffEvent,
     NoteOnEvent, PolyPressureEvent, ProcessContext, ProcessModes, ScaleEvent, SymbolicSampleSizes,
-};
-
-use crate::{
-    plugin::Plugin,
-    plugin_parameter::{NormalizedParameterValue, ParameterId, ParameterPoint},
 };
 
 pub struct InputParameterChanges<'t> {
@@ -100,7 +98,7 @@ impl<'t, T> ProcessOutput<'t, T> {
     pub fn buses(&mut self) -> &mut [OutBus<'t, T>] { self.buses.as_mut_slice() }
 }
 
-pub trait AudioProcessor: Plugin {
+pub trait AudioProcessor: Plugin + State {
     fn process_f32<'t>(&self, input: &'t ProcessInput<'t, f32>, output: &'t mut ProcessOutput<'t, f32>);
     fn process_f64<'t>(&self, input: &'t ProcessInput<'t, f64>, output: &'t mut ProcessOutput<'t, f64>);
     fn get_tail_samples(&self) -> u32 { 0 }
