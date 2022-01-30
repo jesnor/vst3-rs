@@ -14,11 +14,13 @@ mod vst_categories;
 mod vst_edit_controller;
 mod vst_factory;
 
-use crate::utils::wstrcpy;
+use core::slice;
 use std::cell::RefCell;
+use std::intrinsics::copy_nonoverlapping;
 use std::mem;
-use std::os::raw::c_void;
+use std::os::raw::{c_char, c_short, c_void};
 use std::ptr::null_mut;
+use utils::string_copy_into_i16;
 use vst3_com::sys::GUID;
 use vst3_com::ComPtr;
 use vst3_sys::base::{kResultFalse, kResultOk, kResultTrue, tresult, FIDString, IBStream, IPluginBase, IUnknown};
@@ -26,12 +28,24 @@ use vst3_sys::utils::VstPtr;
 use vst3_sys::vst::ParameterFlags::{kCanAutomate, kIsBypass};
 use vst3_sys::vst::{IComponentHandler, IEditController, IUnitInfo, ParameterInfo, ProgramListInfo, TChar, UnitInfo};
 use vst3_sys::VST3;
+use widestring::U16CString;
 
 struct Units(Vec<UnitInfo>);
 struct Parameters(Vec<(ParameterInfo, f64)>);
 struct ComponentHandler(*mut c_void);
 
 struct ContextPtr(*mut c_void);
+
+unsafe fn strcpy(src: &str, dst: *mut c_char) {
+    copy_nonoverlapping(src.as_ptr() as *const c_void as *const _, dst, src.len());
+}
+
+unsafe fn wstrcpy(src: &str, dst: *mut c_short) {
+    let src = U16CString::from_str(src).unwrap();
+    let mut src = src.into_vec();
+    src.push(0);
+    copy_nonoverlapping(src.as_ptr() as *const c_void as *const _, dst, src.len());
+}
 
 #[VST3(implements(IEditController, IUnitInfo))]
 pub struct AGainController {
@@ -100,7 +114,7 @@ impl IEditController for AGainController {
         match id {
             0 => {
                 let value = format!("{:.0}", value_normalized * 100.0);
-                wstrcpy(&value, string);
+                string_copy_into_i16(&value, slice::from_raw_parts_mut(string, 128));
                 kResultTrue
             }
 
@@ -199,14 +213,14 @@ impl IPluginBase for AGainController {
         self.units.borrow_mut().0.push(unit_info);
 
         let mut gain_parameter = ParameterInfo {
-            id: 0,
-            title: [0; 128],
-            short_title: [0; 128],
-            units: [0; 128],
-            step_count: 0,
+            id:                       0,
+            title:                    [0; 128],
+            short_title:              [0; 128],
+            units:                    [0; 128],
+            step_count:               0,
             default_normalized_value: 0.7,
-            unit_id: 1,
-            flags: kCanAutomate as i32,
+            unit_id:                  1,
+            flags:                    kCanAutomate as i32,
         };
 
         wstrcpy("Gain", gain_parameter.title.as_mut_ptr());
@@ -215,14 +229,14 @@ impl IPluginBase for AGainController {
         self.parameters.borrow_mut().0.push((gain_parameter, 1.0));
 
         let mut bypass_parameter = ParameterInfo {
-            id: 1,
-            title: [0; 128],
-            short_title: [0; 128],
-            units: [0; 128],
-            step_count: 1,
+            id:                       1,
+            title:                    [0; 128],
+            short_title:              [0; 128],
+            units:                    [0; 128],
+            step_count:               1,
             default_normalized_value: 0.0,
-            unit_id: 0,
-            flags: kCanAutomate as i32 | kIsBypass as i32,
+            unit_id:                  0,
+            flags:                    kCanAutomate as i32 | kIsBypass as i32,
         };
 
         wstrcpy("Bypass", bypass_parameter.title.as_mut_ptr());

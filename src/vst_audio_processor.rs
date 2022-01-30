@@ -2,7 +2,7 @@ use crate::audio_processor::{
     AudioProcessor, Event, EventData, InBus, InChannel, OutBus, OutChannel, ProcessInput, ProcessOutput,
 };
 use crate::plugin_parameter::{ParameterId, ParameterPoint};
-use crate::utils::wstrcpy;
+use crate::utils::string_copy_into_i16;
 use core::slice;
 use log::info;
 use std::cell::{Cell, RefCell};
@@ -161,7 +161,7 @@ impl IComponent for VstAudioProcessor {
                 let buses = if dir == 0 { &self.audio_inputs } else { &self.audio_outputs };
 
                 if let Some(bus) = buses.borrow().get(index as usize) {
-                    wstrcpy(&bus.name, (*info).name.as_mut_ptr());
+                    string_copy_into_i16(&bus.name, &mut (*info).name);
                     (*info).channel_count = get_channel_count(bus.speaker_arr);
                     (*info).bus_type = bus.bus_type;
                     (*info).flags = bus.flags as u32;

@@ -1,11 +1,12 @@
 #![allow(unused_variables)]
 
-use crate::edit_controller::EditController;
+use crate::edit_controller::{BusDirection, EditController, KnobMode, MediaType};
 use crate::plugin_parameter::ParameterInfo;
-use crate::utils::{char16_to_string, string_copy_into_16, string_to_fixed_width_16};
+use crate::utils::{char16_to_string, string_copy_into_i16, string_copy_into_u16, string_to_fixed_width_i16};
 use core::slice;
 use log::info;
 use std::cell::Cell;
+use std::ffi::CStr;
 use std::ptr::null_mut;
 use vst3_com::interfaces::IUnknown;
 use vst3_com::{c_void, ComPtr};
@@ -24,9 +25,9 @@ use vst3_sys::{
 fn to_vst_parameter_info(info: &ParameterInfo) -> vst::ParameterInfo {
     vst::ParameterInfo {
         id:                       info.id,
-        title:                    string_to_fixed_width_16(&info.title),
-        short_title:              string_to_fixed_width_16(&info.short_title),
-        units:                    string_to_fixed_width_16(&info.units),
+        title:                    string_to_fixed_width_i16(&info.title),
+        short_title:              string_to_fixed_width_i16(&info.short_title),
+        units:                    string_to_fixed_width_i16(&info.units),
         step_count:               info.step_count,
         default_normalized_value: *info.default_normalized_value,
         unit_id:                  info.unit_id,
@@ -60,88 +61,42 @@ impl VstEditController {
     }
 }
 
-impl IUnitInfo for VstEditController {
-    unsafe fn get_unit_count(&self) -> i32 {
-        info!("IUnitInfo::get_unit_count");
-        1
-    }
+impl IPluginBase for VstEditController {
+    unsafe fn initialize(&self, context: *mut c_void) -> tresult {
+        info!("IPluginBase::initialize controller");
 
-    unsafe fn get_unit_info(&self, unit_index: i32, info: *mut UnitInfo) -> i32 {
-        info!("IUnitInfo::get_unit_info {}", unit_index);
-
-        if unit_index == 0 {
-            let mut i = &mut *info;
-            i.id = 1;
-            i.parent_unit_id = 0;
-            string_copy_into_16("Unit1", &mut i.name);
-            i.program_list_id = -1;
-            return kResultTrue;
+        if !self.context.get().is_null() {
+            return kResultFalse;
         }
 
-        kResultFalse
-    }
+        self.context.set(context);
 
-    unsafe fn get_program_list_count(&self) -> i32 {
-        info!("IUnitInfo::get_program_list_count");
-        0
-    }
-
-    unsafe fn get_program_list_info(&self, list_index: i32, _info: *mut ProgramListInfo) -> i32 {
-        info!("IUnitInfo::get_program_list_info {}", list_index);
-        kResultFalse
-    }
-
-    unsafe fn get_program_name(&self, list_id: i32, program_index: i32, _name: *mut u16) -> i32 {
-        info!("IUnitInfo::get_program_name {} {}", list_id, program_index);
-        kResultFalse
-    }
-
-    unsafe fn get_program_info(
-        &self,
-        list_id: i32,
-        program_index: i32,
-        _attribute_id: *const u8,
-        _attribute_value: *mut u16,
-    ) -> i32 {
-        info!("IUnitInfo::get_program_info {} {}", list_id, program_index);
-        kResultFalse
-    }
-
-    unsafe fn has_program_pitch_names(&self, id: i32, index: i32) -> i32 {
-        info!("IUnitInfo::has_program_pitch_names {} {}", id, index);
-        kResultFalse
-    }
-
-    unsafe fn get_program_pitch_name(&self, id: i32, index: i32, pitch: i16, _name: *mut u16) -> i32 {
-        info!("IUnitInfo::get_program_pitch_name {} {} {}", id, index, pitch);
-        kResultFalse
-    }
-
-    unsafe fn get_selected_unit(&self) -> i32 {
-        info!("IUnitInfo::get_selected_unit");
-        1
-    }
-
-    unsafe fn select_unit(&self, id: i32) -> i32 {
-        info!("IUnitInfo::select_unit {}", id);
-
-        if id == 1 {
+        if self.controller.initialize() {
             kResultOk
         }
         else {
-            kResultFalse
+            kInternalError
         }
     }
 
-    unsafe fn get_unit_by_bus(&self, type_: i32, dir: i32, index: i32, channel: i32, unit_id: *mut i32) -> i32 {
-        info!("IUnitInfo::get_unit_by_bus {} {} {} {}", type_, dir, index, channel);
-        *unit_id = 1;
-        kResultOk
-    }
+    unsafe fn terminate(&self) -> tresult {
+        info!("IPluginBase::terminate controller");
 
-    unsafe fn set_unit_program_data(&self, list_or_unit: i32, program_index: i32, _data: VstPtr<dyn IBStream>) -> i32 {
-        info!("IUnitInfo::set_unit_program_data {} {}", list_or_unit, program_index);
-        kResultFalse
+        if !self.component_handler.get().is_null() {
+            let component_handler = self.component_handler.get() as *mut *mut _;
+            let component_handler: ComPtr<dyn IComponentHandler> = ComPtr::new(component_handler);
+            component_handler.release();
+            self.component_handler.set(null_mut());
+        }
+
+        self.context.set(null_mut());
+
+        if self.controller.terminate() {
+            kResultOk
+        }
+        else {
+            kInternalError
+        }
     }
 }
 
@@ -204,7 +159,7 @@ impl IEditController for VstEditController {
 
         if let Some(p) = self.controller.get_parameter_by_id(id) {
             let s = self.controller.normalized_parameter_value_to_string(p, value_normalized.into());
-            string_copy_into_16(&s, slice::from_raw_parts_mut(string, 128));
+            string_copy_into_i16(&s, slice::from_raw_parts_mut(string, 128));
             return kResultOk;
         }
 
@@ -306,56 +261,236 @@ impl IEditController for VstEditController {
 impl IEditController2 for VstEditController {
     unsafe fn set_knob_mode(&self, mode: vst3_sys::vst::KnobMode) -> vst3_sys::base::tresult {
         info!("IEditController2::set_knob_mode {}", mode);
-        kResultOk
+
+        if self.controller.set_knob_mode(match mode {
+            0 => KnobMode::Circular,
+            1 => KnobMode::RelativeCircular,
+            2 => KnobMode::Linear,
+            _ => return kInvalidArgument,
+        }) {
+            kResultOk
+        }
+        else {
+            kResultFalse
+        }
     }
 
     unsafe fn open_help(&self, only_check: vst3_sys::base::TBool) -> vst3_sys::base::tresult {
         info!("IEditController2::open_help {}", only_check);
-        kResultOk
+
+        if only_check == 0 {
+            self.controller.open_help();
+            kResultOk
+        }
+        else if self.controller.is_open_help_supported() {
+            kResultOk
+        }
+        else {
+            kResultFalse
+        }
     }
 
     unsafe fn oepn_about_box(&self, only_check: vst3_sys::base::TBool) -> vst3_sys::base::tresult {
         info!("IEditController2::oepn_about_box {}", only_check);
-        kResultOk
+
+        if only_check == 0 {
+            self.controller.open_about_box();
+            kResultOk
+        }
+        else if self.controller.is_open_about_box_supported() {
+            kResultOk
+        }
+        else {
+            kResultFalse
+        }
     }
 }
 
-impl IPluginBase for VstEditController {
-    unsafe fn initialize(&self, context: *mut c_void) -> tresult {
-        info!("IPluginBase::initialize controller");
+impl IUnitInfo for VstEditController {
+    unsafe fn get_unit_count(&self) -> i32 { self.controller.get_units().map(|l| l.len() as i32).unwrap_or(1) }
 
-        if !self.context.get().is_null() {
-            return kResultFalse;
+    unsafe fn get_unit_info(&self, unit_index: i32, info: *mut UnitInfo) -> i32 {
+        info!("IUnitInfo::get_unit_info {}", unit_index);
+        let mut i = &mut *info;
+
+        if let Some(units) = self.controller.get_units() {
+            if let Some(u) = units.get(unit_index as usize) {
+                i.id = *u.id;
+                i.parent_unit_id = *u.parent_unit_id;
+                string_copy_into_i16(&u.name, &mut i.name);
+                i.program_list_id = *u.program_list_id;
+                kResultTrue
+            }
+            else {
+                kInvalidArgument
+            }
         }
-
-        self.context.set(context);
-
-        if self.controller.initialize() {
-            kResultOk
+        else if unit_index == 0 {
+            i.id = 1;
+            i.parent_unit_id = 0;
+            string_copy_into_i16("Unit1", &mut i.name);
+            i.program_list_id = -1;
+            kResultTrue
         }
         else {
-            kInternalError
+            kResultFalse
         }
     }
 
-    unsafe fn terminate(&self) -> tresult {
-        info!("IPluginBase::terminate controller");
+    unsafe fn get_program_list_count(&self) -> i32 {
+        info!("IUnitInfo::get_program_list_count");
+        self.controller.get_program_lists().map(|p| p.len() as i32).unwrap_or(0)
+    }
 
-        if !self.component_handler.get().is_null() {
-            let component_handler = self.component_handler.get() as *mut *mut _;
-            let component_handler: ComPtr<dyn IComponentHandler> = ComPtr::new(component_handler);
-            component_handler.release();
-            self.component_handler.set(null_mut());
+    unsafe fn get_program_list_info(&self, list_index: i32, info: *mut ProgramListInfo) -> i32 {
+        info!("IUnitInfo::get_program_list_info {}", list_index);
+
+        if let Some(pl) = self.controller.get_program_lists() {
+            if let Some(p) = pl.get(list_index as usize) {
+                let mut i = &mut *info;
+                i.id = *p.id;
+                string_copy_into_u16(&p.name, &mut i.name);
+                i.program_count = p.program_count;
+                return kResultOk;
+            }
         }
 
-        self.context.set(null_mut());
+        kResultFalse
+    }
 
-        if self.controller.terminate() {
+    unsafe fn get_program_name(&self, list_id: i32, program_index: i32, name: *mut u16) -> i32 {
+        info!("IUnitInfo::get_program_name {} {}", list_id, program_index);
+
+        if let Some(pl) = self.controller.get_program_list_by_id(list_id.into()) {
+            if program_index >= 0 && program_index < pl.program_count {
+                string_copy_into_u16(
+                    self.controller.get_program_name(pl, program_index),
+                    slice::from_raw_parts_mut(name, 128),
+                );
+
+                return kResultOk;
+            }
+        }
+
+        kInvalidArgument
+    }
+
+    unsafe fn get_program_info(
+        &self,
+        list_id: i32,
+        program_index: i32,
+        attribute_id: *const u8,
+        attribute_value: *mut u16,
+    ) -> i32 {
+        info!("IUnitInfo::get_program_info {} {}", list_id, program_index);
+
+        if let Some(pl) = self.controller.get_program_list_by_id(list_id.into()) {
+            if program_index >= 0 && program_index < pl.program_count {
+                if let Some(attr) = CStr::from_ptr(attribute_id as *const i8).to_str().ok() {
+                    if let Some(value) = self.controller.get_program_info(pl, program_index, attr) {
+                        string_copy_into_u16(value, slice::from_raw_parts_mut(attribute_value, 128));
+                        return kResultOk;
+                    }
+                }
+            }
+        }
+
+        kInvalidArgument
+    }
+
+    unsafe fn has_program_pitch_names(&self, id: i32, index: i32) -> i32 {
+        info!("IUnitInfo::has_program_pitch_names {} {}", id, index);
+
+        if let Some(pl) = self.controller.get_program_list_by_id(id.into()) {
+            if self.controller.has_program_pitch_names(pl, index) {
+                return kResultTrue;
+            }
+        }
+
+        kResultFalse
+    }
+
+    unsafe fn get_program_pitch_name(&self, id: i32, index: i32, pitch: i16, name: *mut u16) -> i32 {
+        info!("IUnitInfo::get_program_pitch_name {} {} {}", id, index, pitch);
+
+        if let Some(pl) = self.controller.get_program_list_by_id(id.into()) {
+            if self.controller.has_program_pitch_names(pl, index) && index >= 0 && index < pl.program_count {
+                string_copy_into_u16(
+                    self.controller.get_program_pitch_name(pl, index, pitch),
+                    slice::from_raw_parts_mut(name, 128),
+                );
+
+                return kResultTrue;
+            }
+        }
+
+        kResultFalse
+    }
+
+    unsafe fn get_selected_unit(&self) -> i32 {
+        info!("IUnitInfo::get_selected_unit");
+
+        if self.controller.get_units().is_some() {
+            *self.controller.get_selected_unit()
+        }
+        else {
+            1
+        }
+    }
+
+    unsafe fn select_unit(&self, id: i32) -> i32 {
+        info!("IUnitInfo::select_unit {}", id);
+
+        if self.controller.get_units().is_some() {
+            if self.controller.select_unit(id.into()) {
+                kResultOk
+            }
+            else {
+                kInvalidArgument
+            }
+        }
+        else if id == 1 {
             kResultOk
         }
         else {
-            kInternalError
+            kInvalidArgument
         }
+    }
+
+    unsafe fn get_unit_by_bus(&self, type_: i32, dir: i32, index: i32, channel: i32, unit_id: *mut i32) -> i32 {
+        info!("IUnitInfo::get_unit_by_bus {} {} {} {}", type_, dir, index, channel);
+
+        if self.controller.get_units().is_some() {
+            if let Some(id) = self.controller.get_unit_by_bus(
+                match type_ {
+                    0 => MediaType::Audio,
+                    1 => MediaType::Event,
+                    _ => return kInvalidArgument,
+                },
+                match dir {
+                    0 => BusDirection::Input,
+                    1 => BusDirection::Output,
+                    _ => return kInvalidArgument,
+                },
+                index,
+                channel,
+            ) {
+                *unit_id = *id;
+                kResultOk
+            }
+            else {
+                kInvalidArgument
+            }
+        }
+        else {
+            *unit_id = 1;
+            kResultOk
+        }
+    }
+
+    unsafe fn set_unit_program_data(&self, list_or_unit: i32, program_index: i32, _data: VstPtr<dyn IBStream>) -> i32 {
+        info!("IUnitInfo::set_unit_program_data {} {}", list_or_unit, program_index);
+        kResultFalse
     }
 }
 
