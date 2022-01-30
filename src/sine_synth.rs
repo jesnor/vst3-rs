@@ -1,49 +1,31 @@
 use crate::{
-    plugin::{
-        AudioProcessor, EditController, Parameter, ParameterId, ParameterPoint, ParameterValue, Plugin, ProcessInput,
-        ProcessOutput,
-    },
+    audio_processor::{AudioProcessor, ProcessInput, ProcessOutput},
+    edit_controller::EditController,
+    plugin::Plugin,
+    plugin_parameter::{NormalizedParameterValue, ParameterInfo, ParameterValueContainer, ParameterWithValue},
+    range::Range,
     vst_factory::{AudioProcessorInfo, AudioProcessorType, FactoryInfo, VstPluginFactory},
 };
 use flexi_logger::{DeferredNow, Logger, Record};
 use log::info;
-use std::{cell::Cell, collections::HashMap, f64::consts::PI};
+use once_cell::sync::Lazy;
+use std::{cell::Cell, f64::consts::PI, rc::Rc};
 use vst3_com::{c_void, sys::GUID};
 
-lazy_static! {
-    static ref GAIN: Parameter = Parameter::new_linear(1, "Gain", "%", 50.0, 0.0, 100.0);
-    static ref FREQ: Parameter = Parameter::new_linear(2, "Freq", "Hz", 400.0, 20.0, 2000.0);
-    static ref PARAMS: Vec<&'static Parameter> = vec![&GAIN, &FREQ];
-}
+static GAIN: Lazy<ParameterInfo> =
+    Lazy::new(|| ParameterInfo::new_linear(1, "Gain", "%", 50.0, Range::new(0.0, 100.0)));
 
-#[derive(Clone)]
-struct ParameterWithValue {
-    param: &'static Parameter,
-    value: Cell<ParameterValue>,
-}
+static FREQ: Lazy<ParameterInfo> =
+    Lazy::new(|| ParameterInfo::new_linear(2, "Freq", "Hz", 400.0, Range::new(20.0, 2000.0)));
 
-impl ParameterWithValue {
-    fn new(param: &'static Parameter) -> Self {
-        Self {
-            param,
-            value: param.default_normalized_value.into(),
-        }
-    }
-
-    fn update(&self, param_changes: &HashMap<ParameterId, Vec<ParameterPoint>>) -> ParameterValue {
-        if let Some(v) = param_changes.get(&self.param.id).map(|v| v.last().map(|p| p.value)).flatten() {
-            self.value.set(v);
-        }
-
-        (self.param.normalized_to_plain_value)(self.value.get())
-    }
-}
+static PARAMS: Lazy<Vec<&'static ParameterInfo>> = Lazy::new(|| vec![&GAIN, &FREQ]);
 
 #[derive(Clone)]
 struct SineSynth {
-    pos:  Cell<f64>,
-    gain: ParameterWithValue,
-    freq: ParameterWithValue,
+    parameter_value_container: ParameterValueContainer,
+    gain:                      Rc<ParameterWithValue>,
+    freq:                      Rc<ParameterWithValue>,
+    pos:                       Cell<f64>,
 }
 
 impl SineSynth {
@@ -54,8 +36,8 @@ impl SineSynth {
         f: impl Fn(f64) -> T,
     ) {
         let p = self.pos.get();
-        let gain = self.gain.update(&input.param_changes) / 100.0;
-        let freq = self.freq.update(&input.param_changes);
+        let gain = self.gain.update(&input.param_changes).get() / 100.0;
+        let freq = *self.freq.update(&input.param_changes);
         let c = freq / input.context.sample_rate;
 
         for bus in output.buses().iter_mut() {
@@ -76,10 +58,15 @@ impl SineSynth {
 
 impl Default for SineSynth {
     fn default() -> Self {
+        let parameter_value_container = ParameterValueContainer::new(&PARAMS);
+        let gain = parameter_value_container.clone_value(GAIN.id);
+        let freq = parameter_value_container.clone_value(FREQ.id);
+
         Self {
-            pos:  Cell::default(),
-            gain: ParameterWithValue::new(&GAIN),
-            freq: ParameterWithValue::new(&FREQ),
+            parameter_value_container,
+            gain,
+            freq,
+            pos: Cell::default(),
         }
     }
 }
@@ -97,13 +84,13 @@ impl AudioProcessor for SineSynth {
 }
 
 struct SineSynthController {
-    param_values: HashMap<ParameterId, Cell<f64>>,
+    parameter_value_container: ParameterValueContainer,
 }
 
 impl SineSynthController {
     fn new() -> Self {
         Self {
-            param_values: PARAMS.iter().map(|p| (p.id, p.default_normalized_value.into())).collect(),
+            parameter_value_container: ParameterValueContainer::new(&PARAMS),
         }
     }
 }
@@ -111,15 +98,15 @@ impl SineSynthController {
 impl Plugin for SineSynthController {}
 
 impl EditController for SineSynthController {
-    fn parameters(&self) -> &[&Parameter] { &PARAMS }
+    fn get_parameters(&self) -> &[&ParameterInfo] { &PARAMS }
 
-    fn get_param_normalized(&self, param: &Parameter) -> ParameterValue {
-        self.param_values.get(&param.id).map(|c| c.get()).unwrap_or_else(|| param.default_normalized_value)
+    fn get_normalized_parameter_value(&self, param: &ParameterInfo) -> NormalizedParameterValue {
+        self.parameter_value_container.get_value(param.id).unwrap().get_normalized()
     }
 
-    fn set_param_normalized(&self, param: &Parameter, value: ParameterValue) {
-        if let Some(c) = self.param_values.get(&param.id) {
-            c.set(value)
+    fn set_normalized_parameter_value(&self, param: &ParameterInfo, value: NormalizedParameterValue) {
+        if let Some(v) = self.parameter_value_container.get_value(param.id) {
+            v.set_normalized(value)
         }
     }
 }

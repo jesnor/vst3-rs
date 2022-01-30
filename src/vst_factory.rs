@@ -1,11 +1,13 @@
 #![allow(clippy::type_complexity, clippy::too_many_arguments)]
 
-use crate::plugin::{AudioProcessor, EditController};
+use crate::audio_processor::AudioProcessor;
+use crate::edit_controller::EditController;
 use crate::utils::{char8_to_16, string_to_fixed_width};
 use crate::vst_audio_processor::VstAudioProcessor;
 use crate::vst_edit_controller::VstEditController;
 use log::info;
 use std::cell::Cell;
+use std::intrinsics::copy_nonoverlapping;
 use std::ptr::null_mut;
 use vst3_com::{c_void, IID};
 use vst3_sys::base::{
@@ -182,8 +184,6 @@ impl VstPluginFactory {
     }
 }
 
-unsafe fn copy<T>(src: *const T, dst: *mut T) { std::ptr::copy_nonoverlapping(src, dst, 1); }
-
 impl IPluginFactory3 for VstPluginFactory {
     unsafe fn get_class_info_unicode(&self, index: i32, info: *mut PClassInfoW) -> tresult {
         if let Some((ci, _)) = self.classes.get(index as usize) {
@@ -204,7 +204,7 @@ impl IPluginFactory3 for VstPluginFactory {
 impl IPluginFactory2 for VstPluginFactory {
     unsafe fn get_class_info2(&self, index: i32, info: *mut PClassInfo2) -> tresult {
         if let Some((ci, _)) = self.classes.get(index as usize) {
-            copy(ci, info);
+            copy_nonoverlapping(ci, info, 1);
             kResultOk
         }
         else {
@@ -216,7 +216,7 @@ impl IPluginFactory2 for VstPluginFactory {
 impl IPluginFactory for VstPluginFactory {
     unsafe fn get_factory_info(&self, info: *mut PFactoryInfo) -> tresult {
         info!("IPluginFactory.get_factory_info");
-        copy(&self.pinfo, info);
+        copy_nonoverlapping(&self.pinfo, info, 1);
         kResultOk
     }
 

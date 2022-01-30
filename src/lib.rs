@@ -1,15 +1,18 @@
 #![allow(dead_code)]
 
+mod audio_processor;
+mod converter;
+mod edit_controller;
 mod plugin;
+mod plugin_parameter;
+mod range;
 mod sine_synth;
+mod type_cell;
 mod utils;
 mod vst_audio_processor;
 mod vst_categories;
 mod vst_edit_controller;
 mod vst_factory;
-
-#[macro_use]
-extern crate lazy_static;
 
 use crate::utils::wstrcpy;
 use std::cell::RefCell;

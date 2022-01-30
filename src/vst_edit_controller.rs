@@ -1,33 +1,35 @@
 #![allow(unused_variables)]
 
+use crate::edit_controller::EditController;
+use crate::plugin_parameter::ParameterInfo;
+use crate::utils::{char16_to_string, string_copy_into_16, string_to_fixed_width_16};
 use core::slice;
 use log::info;
 use std::cell::Cell;
-use std::ops::Deref;
 use std::ptr::null_mut;
 use vst3_com::interfaces::IUnknown;
 use vst3_com::{c_void, ComPtr};
 use vst3_sys::base::{kInternalError, kInvalidArgument, kResultFalse, kResultOk, kResultTrue};
-use vst3_sys::vst::{CtrlNumber, IComponentHandler, IEditControllerHostEditing, IMidiMapping, ParamID, ParameterFlags};
+use vst3_sys::vst::{
+    CtrlNumber, IComponentHandler, IEditController, IEditController2, IEditControllerHostEditing, IMidiMapping,
+    IUnitInfo, ParamID, ParameterFlags, ProgramListInfo, TChar, UnitInfo,
+};
 use vst3_sys::VST3;
 use vst3_sys::{
     base::{tresult, FIDString, IBStream, IPluginBase},
     utils::VstPtr,
-    vst::{IEditController, IEditController2, IUnitInfo, ParameterInfo, ProgramListInfo, TChar, UnitInfo},
+    vst,
 };
 
-use crate::plugin::{self, EditController};
-use crate::utils::{char16_to_string, string_copy_into_16, string_to_fixed_width_16};
-
-fn conv_parameter_info(info: &plugin::Parameter) -> ParameterInfo {
-    ParameterInfo {
-        id: info.id,
-        title: string_to_fixed_width_16(&info.title),
-        short_title: string_to_fixed_width_16(&info.short_title),
-        units: string_to_fixed_width_16(&info.units),
-        step_count: info.step_count,
-        default_normalized_value: info.default_normalized_value,
-        unit_id: info.unit_id,
+fn to_vst_parameter_info(info: &ParameterInfo) -> vst::ParameterInfo {
+    vst::ParameterInfo {
+        id:                       info.id,
+        title:                    string_to_fixed_width_16(&info.title),
+        short_title:              string_to_fixed_width_16(&info.short_title),
+        units:                    string_to_fixed_width_16(&info.units),
+        step_count:               info.step_count,
+        default_normalized_value: *info.default_normalized_value,
+        unit_id:                  info.unit_id,
 
         flags: if info.flags.can_automate { ParameterFlags::kCanAutomate as i32 } else { 0 } |
             if info.flags.is_read_only { ParameterFlags::kIsReadOnly as i32 } else { 0 } |
@@ -56,16 +58,6 @@ impl VstEditController {
     pub fn new(controller: Box<dyn EditController>) -> Box<Self> {
         Self::allocate(controller, Cell::new(null_mut()), Cell::new(null_mut()))
     }
-
-    pub fn get_param(&self, id: u32) -> Option<&plugin::Parameter> {
-        for p in self.controller.parameters() {
-            if p.id == id {
-                return Some(p);
-            }
-        }
-
-        None
-    }
 }
 
 impl IUnitInfo for VstEditController {
@@ -75,7 +67,7 @@ impl IUnitInfo for VstEditController {
     }
 
     unsafe fn get_unit_info(&self, unit_index: i32, info: *mut UnitInfo) -> i32 {
-        info!("IUnitInfo::get_unit_info");
+        info!("IUnitInfo::get_unit_info {}", unit_index);
 
         if unit_index == 0 {
             let mut i = &mut *info;
@@ -94,42 +86,44 @@ impl IUnitInfo for VstEditController {
         0
     }
 
-    unsafe fn get_program_list_info(&self, _list_index: i32, _info: *mut ProgramListInfo) -> i32 {
-        info!("IUnitInfo::get_program_list_info");
+    unsafe fn get_program_list_info(&self, list_index: i32, _info: *mut ProgramListInfo) -> i32 {
+        info!("IUnitInfo::get_program_list_info {}", list_index);
         kResultFalse
     }
 
-    unsafe fn get_program_name(&self, _list_id: i32, _program_index: i32, _name: *mut u16) -> i32 {
-        info!("IUnitInfo::get_program_name");
+    unsafe fn get_program_name(&self, list_id: i32, program_index: i32, _name: *mut u16) -> i32 {
+        info!("IUnitInfo::get_program_name {} {}", list_id, program_index);
         kResultFalse
     }
 
     unsafe fn get_program_info(
         &self,
-        _list_id: i32,
-        _program_index: i32,
+        list_id: i32,
+        program_index: i32,
         _attribute_id: *const u8,
         _attribute_value: *mut u16,
     ) -> i32 {
-        info!("IUnitInfo::get_program_info");
+        info!("IUnitInfo::get_program_info {} {}", list_id, program_index);
         kResultFalse
     }
 
-    unsafe fn has_program_pitch_names(&self, _id: i32, _index: i32) -> i32 {
-        info!("IUnitInfo::has_program_pitch_names");
+    unsafe fn has_program_pitch_names(&self, id: i32, index: i32) -> i32 {
+        info!("IUnitInfo::has_program_pitch_names {} {}", id, index);
         kResultFalse
     }
-    unsafe fn get_program_pitch_name(&self, _id: i32, _index: i32, _pitch: i16, _name: *mut u16) -> i32 {
-        info!("IUnitInfo::get_program_pitch_name");
+
+    unsafe fn get_program_pitch_name(&self, id: i32, index: i32, pitch: i16, _name: *mut u16) -> i32 {
+        info!("IUnitInfo::get_program_pitch_name {} {} {}", id, index, pitch);
         kResultFalse
     }
+
     unsafe fn get_selected_unit(&self) -> i32 {
         info!("IUnitInfo::get_selected_unit");
         1
     }
 
     unsafe fn select_unit(&self, id: i32) -> i32 {
-        info!("IUnitInfo::select_unit");
+        info!("IUnitInfo::select_unit {}", id);
 
         if id == 1 {
             kResultOk
@@ -139,19 +133,14 @@ impl IUnitInfo for VstEditController {
         }
     }
 
-    unsafe fn get_unit_by_bus(&self, _type_: i32, _dir: i32, _index: i32, _channel: i32, unit_id: *mut i32) -> i32 {
-        info!("IUnitInfo::get_unit_by_bus");
+    unsafe fn get_unit_by_bus(&self, type_: i32, dir: i32, index: i32, channel: i32, unit_id: *mut i32) -> i32 {
+        info!("IUnitInfo::get_unit_by_bus {} {} {} {}", type_, dir, index, channel);
         *unit_id = 1;
         kResultOk
     }
 
-    unsafe fn set_unit_program_data(
-        &self,
-        _list_or_unit: i32,
-        _program_index: i32,
-        _data: VstPtr<dyn IBStream>,
-    ) -> i32 {
-        info!("IUnitInfo::set_unit_program_data");
+    unsafe fn set_unit_program_data(&self, list_or_unit: i32, program_index: i32, _data: VstPtr<dyn IBStream>) -> i32 {
+        info!("IUnitInfo::set_unit_program_data {} {}", list_or_unit, program_index);
         kResultFalse
     }
 }
@@ -195,14 +184,14 @@ impl IEditController for VstEditController {
 
     unsafe fn get_parameter_count(&self) -> i32 {
         info!("IEditController::get_parameter_count");
-        self.controller.parameters().len() as i32
+        self.controller.get_parameters().len() as i32
     }
 
-    unsafe fn get_parameter_info(&self, param_index: i32, info: *mut ParameterInfo) -> tresult {
-        info!("IEditController::get_parameter_info");
+    unsafe fn get_parameter_info(&self, param_index: i32, info: *mut vst::ParameterInfo) -> tresult {
+        info!("IEditController::get_parameter_info {}", param_index);
 
-        if let Some(p) = self.controller.parameters().get(param_index as usize) {
-            *info = conv_parameter_info(p);
+        if let Some(p) = self.controller.get_parameters().get(param_index as usize) {
+            *info = to_vst_parameter_info(p);
             kResultOk
         }
         else {
@@ -211,10 +200,10 @@ impl IEditController for VstEditController {
     }
 
     unsafe fn get_param_string_by_value(&self, id: u32, value_normalized: f64, string: *mut TChar) -> tresult {
-        info!("IEditController::get_param_string_by_value");
+        info!("IEditController::get_param_string_by_value {} {}", id, value_normalized);
 
-        if let Some(p) = self.get_param(id) {
-            let s = p.value_to_string.deref()(value_normalized);
+        if let Some(p) = self.controller.get_parameter_by_id(id) {
+            let s = self.controller.normalized_parameter_value_to_string(p, value_normalized.into());
             string_copy_into_16(&s, slice::from_raw_parts_mut(string, 128));
             return kResultOk;
         }
@@ -223,11 +212,14 @@ impl IEditController for VstEditController {
     }
 
     unsafe fn get_param_value_by_string(&self, id: u32, string: *const TChar, value_normalized: *mut f64) -> tresult {
-        info!("IEditController::get_param_value_by_string");
+        info!("IEditController::get_param_value_by_string {}", id);
 
-        if let Some(p) = self.get_param(id) {
-            if let Some(v) = p.string_to_value.deref()(&char16_to_string(slice::from_raw_parts(string, 128))) {
-                *value_normalized = v;
+        if let Some(p) = self.controller.get_parameter_by_id(id) {
+            if let Some(v) = self
+                .controller
+                .string_to_normalized_parameter_value(p, &char16_to_string(slice::from_raw_parts(string, 128)))
+            {
+                *value_normalized = *v;
                 return kResultOk;
             }
         }
@@ -236,10 +228,10 @@ impl IEditController for VstEditController {
     }
 
     unsafe fn normalized_param_to_plain(&self, id: u32, value_normalized: f64) -> f64 {
-        info!("IEditController::normalized_param_to_plain");
+        info!("IEditController::normalized_param_to_plain {} {}", id, value_normalized);
 
-        if let Some(p) = self.get_param(id) {
-            p.normalized_to_plain_value.deref()(value_normalized)
+        if let Some(p) = self.controller.get_parameter_by_id(id) {
+            *p.normalized_to_plain_converter.convert(value_normalized.into())
         }
         else {
             0.0
@@ -247,10 +239,10 @@ impl IEditController for VstEditController {
     }
 
     unsafe fn plain_param_to_normalized(&self, id: u32, plain_value: f64) -> f64 {
-        info!("IEditController::plain_param_to_normalized");
+        info!("IEditController::plain_param_to_normalized {} {}", id, plain_value);
 
-        if let Some(p) = self.get_param(id) {
-            p.plain_to_normalized_value.deref()(plain_value)
+        if let Some(p) = self.controller.get_parameter_by_id(id) {
+            *p.normalized_to_plain_converter.convert_inverse(plain_value.into())
         }
         else {
             0.0
@@ -258,10 +250,10 @@ impl IEditController for VstEditController {
     }
 
     unsafe fn get_param_normalized(&self, id: u32) -> f64 {
-        info!("IEditController::get_param_normalized");
+        info!("IEditController::get_param_normalized {}", id);
 
-        if let Some(p) = self.get_param(id) {
-            self.controller.get_param_normalized(p)
+        if let Some(p) = self.controller.get_parameter_by_id(id) {
+            *self.controller.get_normalized_parameter_value(p)
         }
         else {
             0.0
@@ -269,10 +261,10 @@ impl IEditController for VstEditController {
     }
 
     unsafe fn set_param_normalized(&self, id: u32, value: f64) -> tresult {
-        info!("IEditController::set_param_normalized");
+        info!("IEditController::set_param_normalized {} {}", id, value);
 
-        if let Some(p) = self.get_param(id) {
-            self.controller.set_param_normalized(p, value);
+        if let Some(p) = self.controller.get_parameter_by_id(id) {
+            self.controller.set_normalized_parameter_value(p, value.into());
             kResultOk
         }
         else {
@@ -313,17 +305,17 @@ impl IEditController for VstEditController {
 
 impl IEditController2 for VstEditController {
     unsafe fn set_knob_mode(&self, mode: vst3_sys::vst::KnobMode) -> vst3_sys::base::tresult {
-        info!("IEditController2::set_knob_mode");
+        info!("IEditController2::set_knob_mode {}", mode);
         kResultOk
     }
 
     unsafe fn open_help(&self, only_check: vst3_sys::base::TBool) -> vst3_sys::base::tresult {
-        info!("IEditController2::open_help");
+        info!("IEditController2::open_help {}", only_check);
         kResultOk
     }
 
     unsafe fn oepn_about_box(&self, only_check: vst3_sys::base::TBool) -> vst3_sys::base::tresult {
-        info!("IEditController2::oepn_about_box");
+        info!("IEditController2::oepn_about_box {}", only_check);
         kResultOk
     }
 }
@@ -369,9 +361,9 @@ impl IPluginBase for VstEditController {
 
 impl IEditControllerHostEditing for VstEditController {
     unsafe fn begin_edit_from_host(&self, id: ParamID) -> tresult {
-        info!("IEditControllerHostEditing::begin_edit_from_host");
+        info!("IEditControllerHostEditing::begin_edit_from_host {}", id);
 
-        if let Some(p) = self.get_param(id) {
+        if let Some(p) = self.controller.get_parameter_by_id(id) {
             self.controller.begin_edit_from_host(p);
             kResultOk
         }
@@ -381,9 +373,9 @@ impl IEditControllerHostEditing for VstEditController {
     }
 
     unsafe fn end_edit_from_host(&self, id: ParamID) -> tresult {
-        info!("IEditControllerHostEditing::end_edit_from_host");
+        info!("IEditControllerHostEditing::end_edit_from_host {}", id);
 
-        if let Some(p) = self.get_param(id) {
+        if let Some(p) = self.controller.get_parameter_by_id(id) {
             self.controller.end_edit_from_host(p);
             kResultOk
         }
@@ -401,7 +393,7 @@ impl IMidiMapping for VstEditController {
         midi_cc_number: CtrlNumber,
         param_id: *mut ParamID,
     ) -> tresult {
-        info!("IMidiMapping::get_midi_controller_assignment");
+        info!("IMidiMapping::get_midi_controller_assignment {} {} {}", bus_index, channel, midi_cc_number);
 
         if let Some(id) = self.controller.get_midi_controller_assignment(bus_index, channel, midi_cc_number) {
             *param_id = id;

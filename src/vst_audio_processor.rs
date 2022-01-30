@@ -1,7 +1,7 @@
-use crate::plugin::{
-    AudioProcessor, Event, EventData, InBus, InChannel, OutBus, OutChannel, ParameterId, ParameterPoint, ProcessInput,
-    ProcessOutput,
+use crate::audio_processor::{
+    AudioProcessor, Event, EventData, InBus, InChannel, OutBus, OutChannel, ProcessInput, ProcessOutput,
 };
+use crate::plugin_parameter::{ParameterId, ParameterPoint};
 use crate::utils::wstrcpy;
 use core::slice;
 use log::info;
@@ -348,7 +348,6 @@ impl IAudioProcessor for VstAudioProcessor {
             };
 
             let mut param_changes: HashMap<ParameterId, Vec<ParameterPoint>> = HashMap::new();
-            info!("IAudioProcessor::process::convert_params");
 
             if let Some(ipc) = data.input_param_changes.upgrade() {
                 let param_count = ipc.get_parameter_count();
@@ -374,7 +373,10 @@ impl IAudioProcessor for VstAudioProcessor {
                                 return None;
                             }
 
-                            v.push(ParameterPoint { sample_offset, value });
+                            v.push(ParameterPoint {
+                                sample_offset,
+                                value: value.into(),
+                            });
                         }
                     }
                     else {
@@ -384,7 +386,6 @@ impl IAudioProcessor for VstAudioProcessor {
             }
 
             let mut events = Vec::new();
-            info!("IAudioProcessor::process::convert_events");
 
             if let Some(ie) = data.input_events.upgrade() {
                 let ec = ie.get_event_count();
@@ -423,7 +424,6 @@ impl IAudioProcessor for VstAudioProcessor {
 
             let mut input_buses: Vec<InBus<'t, T>> = Vec::new();
             let mut output_buses: Vec<OutBus<'t, T>> = Vec::new();
-            info!("IAudioProcessor::process::convert_buffers");
 
             for bus in slice::from_raw_parts(data.inputs, data.num_inputs as usize) {
                 let channels = (0..bus.num_channels)
@@ -466,19 +466,15 @@ impl IAudioProcessor for VstAudioProcessor {
             Some((input, output))
         }
 
-        info!("IAudioProcessor::process");
         let data = &*data;
 
         if data.symbolic_sample_size == K_SAMPLE32 {
             if let Some((i, mut o)) = create_data(data) {
-                info!("IAudioProcessor::process::process_f32");
                 self.processor.process_f32(&i, &mut o);
-                info!("IAudioProcessor::process::process_f32 done");
                 return kResultOk;
             }
         }
         else if let Some((i, mut o)) = create_data(data) {
-            info!("IAudioProcessor::process::process_f64");
             self.processor.process_f64(&i, &mut o);
             return kResultOk;
         }
