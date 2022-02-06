@@ -9,6 +9,8 @@ use log::info;
 use std::cell::Cell;
 use std::intrinsics::copy_nonoverlapping;
 use std::ptr::null_mut;
+use uuid::Uuid;
+use vst3_com::sys::GUID;
 use vst3_com::{c_void, IID};
 use vst3_sys::base::{
     kInvalidArgument, kResultFalse, kResultOk, tresult, ClassCardinality, FactoryFlags, IPluginFactory,
@@ -106,8 +108,8 @@ impl VstPluginFactory {
 
     pub fn add_audio_processor_with_controller_factories(
         &mut self,
-        processor_cid: IID,
-        controller_cid: IID,
+        processor_cid: Uuid,
+        controller_cid: Uuid,
         info: &AudioProcessorInfo,
         processor_factory: impl Fn() -> Box<dyn AudioProcessor> + 'static,
         controller_factory: impl Fn() -> Box<dyn EditController> + 'static,
@@ -124,8 +126,8 @@ impl VstPluginFactory {
 
     pub fn add_audio_processor_factory(
         &mut self,
-        cid: IID,
-        controller_cid: IID,
+        cid: Uuid,
+        controller_cid: Uuid,
         info: &AudioProcessorInfo,
         factory: impl Fn() -> Box<dyn AudioProcessor> + 'static,
     ) {
@@ -153,7 +155,7 @@ impl VstPluginFactory {
 
     pub fn add_edit_controller(
         &mut self,
-        cid: IID,
+        cid: Uuid,
         name: &str,
         version: &str,
         factory: impl Fn() -> Box<dyn EditController> + 'static,
@@ -171,7 +173,7 @@ impl VstPluginFactory {
 
     pub fn add_class_factory(
         &mut self,
-        cid: IID,
+        cid: Uuid,
         category: &str,
         name: &str,
         flags: u32,
@@ -179,7 +181,16 @@ impl VstPluginFactory {
         version: &str,
         factory: impl Fn() -> *mut c_void + 'static,
     ) {
-        let info = new_pclass_info2(cid, category, name, flags, subcategories, &self.info.vendor, version);
+        let info = new_pclass_info2(
+            GUID { data: *cid.as_bytes() },
+            category,
+            name,
+            flags,
+            subcategories,
+            &self.info.vendor,
+            version,
+        );
+
         self.classes.push((info, Box::new(factory)));
     }
 }

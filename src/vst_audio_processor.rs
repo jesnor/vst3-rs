@@ -9,6 +9,7 @@ use log::info;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::ptr::null_mut;
+use uuid::Uuid;
 use vst3_com::{c_void, ComPtr, IID};
 use vst3_sys::base::{kInvalidArgument, kNotImplemented, kResultTrue, IBStream, TBool};
 use vst3_sys::vst::{
@@ -66,7 +67,7 @@ fn get_channel_count(arr: SpeakerArrangement) -> i32 {
 
 #[VST3(implements(IComponent, IAudioProcessor, IPluginBase))]
 pub struct VstAudioProcessor {
-    controller_cid:       IID,
+    controller_cid:       Uuid,
     processor:            Box<dyn AudioProcessor>,
     current_process_mode: Cell<i32>,
     process_setup:        Cell<ProcessSetup>,
@@ -78,7 +79,7 @@ pub struct VstAudioProcessor {
 }
 
 impl VstAudioProcessor {
-    pub fn new(controller_cid: IID, processor: Box<dyn AudioProcessor>) -> Box<Self> {
+    pub fn new(controller_cid: Uuid, processor: Box<dyn AudioProcessor>) -> Box<Self> {
         Self::allocate(
             controller_cid,
             processor,
@@ -129,7 +130,7 @@ impl VstAudioProcessor {
 impl IComponent for VstAudioProcessor {
     unsafe fn get_controller_class_id(&self, tuid: *mut IID) -> tresult {
         info!("IComponent::get_controller_class_id");
-        *tuid = self.controller_cid;
+        (*tuid).data = *self.controller_cid.as_bytes();
         kResultOk
     }
 

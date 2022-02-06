@@ -4,6 +4,7 @@ use flexi_logger::{DeferredNow, Logger, Record};
 use log::info;
 use once_cell::sync::Lazy;
 use std::{cell::Cell, f64::consts::PI, rc::Rc};
+use uuid::Uuid;
 use vst3::{
     audio_processor::{AudioProcessor, ProcessInput, ProcessOutput},
     edit_controller::EditController,
@@ -13,7 +14,10 @@ use vst3::{
     vst_factory::{AudioProcessorInfo, AudioProcessorType, FactoryInfo, VstPluginFactory},
     vst_stream::{VstInStream, VstOutStream},
 };
-use vst3_com::{c_void, sys::GUID};
+use vst3_com::c_void;
+
+static PROCESSOR_CID: &str = "9B069B2D-3DF6-4D6B-9890-6B0B7D232065";
+static CONTROLLER_CID: &str = "CA3F2842-7589-4ED8-8187-66C2521C02BD";
 
 static GAIN: Lazy<ParameterInfo> =
     Lazy::new(|| ParameterInfo::new_linear(1.into(), "Gain", "%", 50.0, Range::new(0.0, 100.0)));
@@ -133,18 +137,6 @@ impl EditController for SineSynthController {
     }
 }
 
-const PROCESSOR_CID: GUID = GUID {
-    data: [
-        0x99, 0x3C, 0x92, 0x59, 0x1E, 0x36, 0x47, 0xFC, 0xB2, 0xB8, 0xE2, 0x79, 0x1A, 0x19, 0xE5, 0x9A,
-    ],
-};
-
-const CONTROLLER_CID: GUID = GUID {
-    data: [
-        0xB8, 0xA2, 0x71, 0x57, 0x5D, 0x40, 0x43, 0xD2, 0xB5, 0xB3, 0x46, 0x1C, 0xC4, 0x53, 0xF3, 0x92,
-    ],
-};
-
 static mut INIT_LOGGER: bool = false;
 
 pub fn opt_format(w: &mut dyn std::io::Write, now: &mut DeferredNow, record: &Record) -> Result<(), std::io::Error> {
@@ -187,8 +179,8 @@ pub unsafe extern "system" fn GetPluginFactory() -> *mut c_void {
     };
 
     f.add_audio_processor_with_controller_factories(
-        PROCESSOR_CID,
-        CONTROLLER_CID,
+        Uuid::parse_str(PROCESSOR_CID).unwrap(),
+        Uuid::parse_str(CONTROLLER_CID).unwrap(),
         &api,
         || Box::new(SineSynth::default()),
         || Box::new(SineSynthController::new()),
