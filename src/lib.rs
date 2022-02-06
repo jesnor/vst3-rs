@@ -1,19 +1,18 @@
 #![allow(dead_code)]
 
-mod audio_processor;
-mod converter;
-mod edit_controller;
-mod plugin;
-mod plugin_parameter;
-mod range;
-mod sine_synth;
-mod type_cell;
-mod utils;
+pub mod audio_processor;
+pub mod converter;
+pub mod edit_controller;
+pub mod plugin;
+pub mod plugin_parameter;
+pub mod range;
+pub mod type_cell;
+pub mod utils;
 mod vst_audio_processor;
 mod vst_categories;
 mod vst_edit_controller;
-mod vst_factory;
-mod vst_stream;
+pub mod vst_factory;
+pub mod vst_stream;
 
 use std::os::raw::c_void;
 

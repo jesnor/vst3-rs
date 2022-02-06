@@ -1,15 +1,18 @@
-use crate::{
+extern crate vst3;
+
+use flexi_logger::{DeferredNow, Logger, Record};
+use log::info;
+use once_cell::sync::Lazy;
+use std::{cell::Cell, f64::consts::PI, rc::Rc};
+use vst3::{
     audio_processor::{AudioProcessor, ProcessInput, ProcessOutput},
     edit_controller::EditController,
     plugin::{read_parameter_values, write_parameter_values, Parameters, Plugin, State},
     plugin_parameter::{NormalizedParameterValue, ParameterInfo, ParameterValueContainer, ParameterWithValue},
     range::Range,
     vst_factory::{AudioProcessorInfo, AudioProcessorType, FactoryInfo, VstPluginFactory},
+    vst_stream::{VstInStream, VstOutStream},
 };
-use flexi_logger::{DeferredNow, Logger, Record};
-use log::info;
-use once_cell::sync::Lazy;
-use std::{cell::Cell, f64::consts::PI, rc::Rc};
 use vst3_com::{c_void, sys::GUID};
 
 static GAIN: Lazy<ParameterInfo> =
@@ -74,11 +77,11 @@ impl Default for SineSynth {
 impl Plugin for SineSynth {}
 
 impl State for SineSynth {
-    fn set_state(&self, stream: &mut crate::vst_stream::VstInStream) -> std::io::Result<()> {
+    fn set_state(&self, stream: &mut VstInStream) -> std::io::Result<()> {
         read_parameter_values(&self.parameter_value_container, stream)
     }
 
-    fn get_state(&self, stream: &mut crate::vst_stream::VstOutStream) -> std::io::Result<()> {
+    fn get_state(&self, stream: &mut VstOutStream) -> std::io::Result<()> {
         write_parameter_values(&self.parameter_value_container, stream)
     }
 }
@@ -120,12 +123,12 @@ impl Parameters for SineSynthController {
 }
 
 impl State for SineSynthController {
-    fn set_state(&self, _stream: &mut crate::vst_stream::VstInStream) -> std::io::Result<()> { Ok(()) }
-    fn get_state(&self, _stream: &mut crate::vst_stream::VstOutStream) -> std::io::Result<()> { Ok(()) }
+    fn set_state(&self, _stream: &mut VstInStream) -> std::io::Result<()> { Ok(()) }
+    fn get_state(&self, _stream: &mut VstOutStream) -> std::io::Result<()> { Ok(()) }
 }
 
 impl EditController for SineSynthController {
-    fn set_component_state(&self, stream: &mut crate::vst_stream::VstInStream) -> std::io::Result<()> {
+    fn set_component_state(&self, stream: &mut VstInStream) -> std::io::Result<()> {
         read_parameter_values(&self.parameter_value_container, stream)
     }
 }
