@@ -7,7 +7,7 @@ Internally the [vst3-sys](https://github.com/RustAudio/vst3-sys) crate is used f
 pure, but unsafe Rust. This crate wraps all the COM objects/interfaces in more idiomatic and totally safe Rust traits which are very
 straightforward to use. Basically you just implement one or two traits and get pretty much all VST3 functionality for free.
 
-I'm currently working on GUI intergration with [the egui crate](https://github.com/emilk/egui). The goal is that you will
+I'm currently working on GUI intergration using the [egui crate](https://github.com/emilk/egui). The goal here is that you will
 get an automatically generated GUI containing all your plugin parameters without writing a single line of code. However, 
 if you need specific GUI functionality, you can of course override/extend the default GUI.
 
