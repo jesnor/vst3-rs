@@ -1,4 +1,4 @@
-# vst3-rs, easy to use Rust bindings for [the VST3 SDK](https://github.com/steinbergmedia/vst3sdk)
+# vst3-rs, easy to use Rust bindings for the [VST3 SDK](https://github.com/steinbergmedia/vst3sdk)
 
 The goal of this crate is to make it as easy as possible to create VST3 plugins using 100% pure, safe Rust code.
 Internally the [vst3-sys](https://github.com/RustAudio/vst3-sys) crate is used for accessing the VST3 COM objects/interfaces in
@@ -10,4 +10,4 @@ get an automatically generated GUI containing all your plugin parameters without
 if you need specific GUI functionality, you can of course override/extend the default GUI.
 
 This crate has only been tested on Windows, but it should be possible to port to other platforms with little (or no) effort.
-I'm grateful for any contributions regarding this.
+I'm grateful for any contributions in this area.
