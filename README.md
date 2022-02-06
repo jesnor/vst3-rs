@@ -1,4 +1,4 @@
-# vst3-rs: easy to use Rust bindings for the [VST3 SDK](https://github.com/steinbergmedia/vst3sdk)
+# vst3-rs: easy to use Rust wrapper for the [VST3 SDK](https://github.com/steinbergmedia/vst3sdk)
 
 **NOTE: This project is in heavy development and the code/API may change at any time**
 
