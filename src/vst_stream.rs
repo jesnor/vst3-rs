@@ -1,5 +1,5 @@
 use std::io::{ErrorKind, Read, Result, Write};
-use vst3_com::{c_void, ComPtr};
+use vst3_com::{c_void, VstPtr};
 use vst3_sys::base::{kIBSeekCur, kIBSeekEnd, kIBSeekSet, kResultOk, IBStream};
 
 pub enum SeekMode {
@@ -13,7 +13,7 @@ pub enum StreamDir {
     Out,
 }
 
-fn seek(stream: &ComPtr<dyn IBStream>, pos: i64, mode: SeekMode) -> Result<i64> {
+fn seek(stream: &VstPtr<dyn IBStream>, pos: i64, mode: SeekMode) -> Result<i64> {
     let mut p: i64 = 0;
 
     if unsafe {
@@ -35,7 +35,7 @@ fn seek(stream: &ComPtr<dyn IBStream>, pos: i64, mode: SeekMode) -> Result<i64> 
     }
 }
 
-fn tell(stream: &ComPtr<dyn IBStream>) -> Result<i64> {
+fn tell(stream: &VstPtr<dyn IBStream>) -> Result<i64> {
     let mut pos: i64 = 0;
 
     if unsafe { stream.tell(&mut pos as *mut i64) } == kResultOk {
@@ -51,20 +51,20 @@ pub trait VstStream {
     fn tell(&self) -> Result<i64>;
 }
 
-pub struct VstInStream {
-    stream: ComPtr<dyn IBStream>,
+pub struct VstInStream<'t> {
+    stream: &'t VstPtr<dyn IBStream>,
 }
 
-impl VstInStream {
-    pub fn new(stream: ComPtr<dyn IBStream>) -> Self { Self { stream } }
+impl<'t> VstInStream<'t> {
+    pub fn new(stream: &'t VstPtr<dyn IBStream>) -> Self { Self { stream } }
 }
 
-impl VstStream for VstInStream {
+impl VstStream for VstInStream<'_> {
     fn seek(&self, pos: i64, mode: SeekMode) -> Result<i64> { seek(&self.stream, pos, mode) }
-    fn tell(&self) -> Result<i64> { tell(&self.stream) }
+    fn tell(&self) -> Result<i64> { tell(self.stream) }
 }
 
-impl Read for VstInStream {
+impl Read for VstInStream<'_> {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
         let mut num_bytes_read = 0;
         unsafe { self.stream.read(buf.as_mut_ptr() as *mut c_void, buf.len() as i32, &mut num_bytes_read) };
@@ -72,20 +72,20 @@ impl Read for VstInStream {
     }
 }
 
-pub struct VstOutStream {
-    stream: ComPtr<dyn IBStream>,
+pub struct VstOutStream<'t> {
+    stream: &'t VstPtr<dyn IBStream>,
 }
 
-impl VstOutStream {
-    pub fn new(stream: ComPtr<dyn IBStream>) -> Self { Self { stream } }
+impl<'t> VstOutStream<'t> {
+    pub fn new(stream: &'t VstPtr<dyn IBStream>) -> Self { Self { stream } }
 }
 
-impl VstStream for VstOutStream {
+impl VstStream for VstOutStream<'_> {
     fn seek(&self, pos: i64, mode: SeekMode) -> Result<i64> { seek(&self.stream, pos, mode) }
     fn tell(&self) -> Result<i64> { tell(&self.stream) }
 }
 
-impl Write for VstOutStream {
+impl Write for VstOutStream<'_> {
     fn write(&mut self, buf: &[u8]) -> Result<usize> {
         let mut num_bytes_written = 0;
         unsafe { self.stream.write(buf.as_ptr() as *const c_void, buf.len() as i32, &mut num_bytes_written) };

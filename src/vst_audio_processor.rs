@@ -10,8 +10,9 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::ptr::null_mut;
 use uuid::Uuid;
-use vst3_com::{c_void, ComPtr, IID};
+use vst3_com::{c_void, IID};
 use vst3_sys::base::{kInvalidArgument, kNotImplemented, kResultTrue, IBStream, TBool};
+use vst3_sys::utils::SharedVstPtr;
 use vst3_sys::vst::{
     BusDirection, BusInfo, BusType, IEventList, IParamValueQueue, IParameterChanges, IoMode, MediaType, ProcessModes,
     ProcessSetup, RoutingInfo, SpeakerArrangement, SymbolicSampleSizes,
@@ -207,34 +208,40 @@ impl IComponent for VstAudioProcessor {
         kResultOk
     }
 
-    unsafe fn set_state(&self, state: *mut c_void) -> tresult {
+    unsafe fn set_state(&self, state: SharedVstPtr<dyn IBStream>) -> tresult {
         info!("IComponent::set_state");
 
         if state.is_null() {
             return kResultFalse;
         }
 
-        let stream: ComPtr<dyn IBStream> = ComPtr::new(state as *mut *mut _);
-
-        if self.processor.set_state(&mut VstInStream::new(stream)).is_ok() {
-            kResultOk
+        if let Some(state) = state.upgrade() {
+            if self.processor.set_state(&mut VstInStream::new(&state)).is_ok() {
+                kResultOk
+            }
+            else {
+                kResultFalse
+            }
         }
         else {
             kResultFalse
         }
     }
 
-    unsafe fn get_state(&self, state: *mut c_void) -> tresult {
+    unsafe fn get_state(&self, state: SharedVstPtr<dyn IBStream>) -> tresult {
         info!("IComponent::get_state");
 
         if state.is_null() {
             return kResultFalse;
         }
 
-        let stream: ComPtr<dyn IBStream> = ComPtr::new(state as *mut *mut _);
-
-        if self.processor.get_state(&mut VstOutStream::new(stream)).is_ok() {
-            kResultOk
+        if let Some(state) = state.upgrade() {
+            if self.processor.get_state(&mut VstOutStream::new(&state)).is_ok() {
+                kResultOk
+            }
+            else {
+                kResultFalse
+            }
         }
         else {
             kResultFalse

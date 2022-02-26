@@ -9,9 +9,9 @@ use log::info;
 use std::cell::Cell;
 use std::ffi::CStr;
 use std::ptr::null_mut;
-use vst3_com::interfaces::IUnknown;
-use vst3_com::{c_void, ComPtr};
+use vst3_com::c_void;
 use vst3_sys::base::{kInternalError, kInvalidArgument, kResultFalse, kResultOk, kResultTrue};
+use vst3_sys::utils::SharedVstPtr;
 use vst3_sys::vst::{
     CtrlNumber, IComponentHandler, IEditController, IEditController2, IEditControllerHostEditing, IMidiMapping,
     IUnitInfo, ParamID, ParameterFlags, ProgramListInfo, TChar, UnitInfo,
@@ -52,13 +52,13 @@ fn to_vst_parameter_info(info: &ParameterInfo) -> vst::ParameterInfo {
 ))]
 pub struct VstEditController {
     controller:        Box<dyn EditController>,
-    component_handler: Cell<*mut c_void>,
+    component_handler: Cell<Option<VstPtr<dyn IComponentHandler>>>,
     context:           Cell<*mut c_void>,
 }
 
 impl VstEditController {
     pub fn new(controller: Box<dyn EditController>) -> Box<Self> {
-        Self::allocate(controller, Cell::new(null_mut()), Cell::new(null_mut()))
+        Self::allocate(controller, Default::default(), Cell::new(null_mut()))
     }
 }
 
@@ -83,13 +83,7 @@ impl IPluginBase for VstEditController {
     unsafe fn terminate(&self) -> tresult {
         info!("IPluginBase::terminate controller");
 
-        if !self.component_handler.get().is_null() {
-            let component_handler = self.component_handler.get() as *mut *mut _;
-            let component_handler: ComPtr<dyn IComponentHandler> = ComPtr::new(component_handler);
-            component_handler.release();
-            self.component_handler.set(null_mut());
-        }
-
+        self.component_handler.set(None);
         self.context.set(null_mut());
 
         if self.controller.terminate() {
@@ -102,51 +96,60 @@ impl IPluginBase for VstEditController {
 }
 
 impl IEditController for VstEditController {
-    unsafe fn set_component_state(&self, state: *mut c_void) -> tresult {
+    unsafe fn set_component_state(&self, state: SharedVstPtr<dyn IBStream>) -> tresult {
         info!("IEditController::set_component_state");
 
         if state.is_null() {
             return kResultFalse;
         }
 
-        let stream: ComPtr<dyn IBStream> = ComPtr::new(state as *mut *mut _);
-
-        if self.controller.set_component_state(&mut VstInStream::new(stream)).is_ok() {
-            kResultOk
+        if let Some(state) = state.upgrade() {
+            if self.controller.set_component_state(&mut VstInStream::new(&state)).is_ok() {
+                kResultOk
+            }
+            else {
+                kResultFalse
+            }
         }
         else {
             kResultFalse
         }
     }
 
-    unsafe fn set_state(&self, state: *mut c_void) -> tresult {
+    unsafe fn set_state(&self, state: SharedVstPtr<dyn IBStream>) -> tresult {
         info!("IEditController::set_state");
 
         if state.is_null() {
             return kResultFalse;
         }
 
-        let stream: ComPtr<dyn IBStream> = ComPtr::new(state as *mut *mut _);
-
-        if self.controller.set_state(&mut VstInStream::new(stream)).is_ok() {
-            kResultOk
+        if let Some(state) = state.upgrade() {
+            if self.controller.set_state(&mut VstInStream::new(&state)).is_ok() {
+                kResultOk
+            }
+            else {
+                kResultFalse
+            }
         }
         else {
             kResultFalse
         }
     }
 
-    unsafe fn get_state(&self, state: *mut c_void) -> tresult {
+    unsafe fn get_state(&self, state: SharedVstPtr<dyn IBStream>) -> tresult {
         info!("IEditController::get_state");
 
         if state.is_null() {
             return kResultFalse;
         }
 
-        let stream: ComPtr<dyn IBStream> = ComPtr::new(state as *mut *mut _);
-
-        if self.controller.get_state(&mut VstOutStream::new(stream)).is_ok() {
-            kResultOk
+        if let Some(state) = state.upgrade() {
+            if self.controller.get_state(&mut VstOutStream::new(&state)).is_ok() {
+                kResultOk
+            }
+            else {
+                kResultFalse
+            }
         }
         else {
             kResultFalse
@@ -243,28 +246,16 @@ impl IEditController for VstEditController {
         }
     }
 
-    unsafe fn set_component_handler(&self, handler: *mut c_void) -> tresult {
+    unsafe fn set_component_handler(&self, handler: SharedVstPtr<dyn IComponentHandler>) -> tresult {
         info!("IEditController::set_component_handler");
 
-        if self.component_handler.get() == handler {
-            return kResultTrue;
+        if let Some(handler) = handler.upgrade() {
+            self.component_handler.set(Some(handler));
+            kResultOk
         }
-
-        if !self.component_handler.get().is_null() {
-            let component_handler = self.component_handler.get() as *mut *mut _;
-            let component_handler: ComPtr<dyn IComponentHandler> = ComPtr::new(component_handler);
-            component_handler.release();
+        else {
+            kResultFalse
         }
-
-        self.component_handler.set(handler);
-
-        if !self.component_handler.get().is_null() {
-            let component_handler = self.component_handler.get() as *mut *mut _;
-            let component_handler: ComPtr<dyn IComponentHandler> = ComPtr::new(component_handler);
-            component_handler.add_ref();
-        }
-
-        kResultTrue
     }
 
     unsafe fn create_view(&self, name: FIDString) -> *mut c_void {
@@ -504,7 +495,12 @@ impl IUnitInfo for VstEditController {
         }
     }
 
-    unsafe fn set_unit_program_data(&self, list_or_unit: i32, program_index: i32, _data: VstPtr<dyn IBStream>) -> i32 {
+    unsafe fn set_unit_program_data(
+        &self,
+        list_or_unit: i32,
+        program_index: i32,
+        _data: SharedVstPtr<dyn IBStream>,
+    ) -> i32 {
         info!("IUnitInfo::set_unit_program_data {} {}", list_or_unit, program_index);
         kResultFalse
     }
