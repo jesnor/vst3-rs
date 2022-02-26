@@ -3,7 +3,7 @@ extern crate vst3;
 use flexi_logger::{DeferredNow, Logger, Record};
 use log::info;
 use once_cell::sync::Lazy;
-use std::{cell::Cell, f64::consts::PI, fs::File, io::Write, rc::Rc};
+use std::{cell::Cell, f64::consts::PI, rc::Rc};
 use uuid::Uuid;
 use vst3::{
     audio_processor::{AudioProcessor, ProcessInput, ProcessOutput},
@@ -154,12 +154,6 @@ pub fn opt_format(w: &mut dyn std::io::Write, now: &mut DeferredNow, record: &Re
 #[no_mangle]
 #[allow(non_snake_case, clippy::missing_safety_doc)]
 pub unsafe extern "system" fn GetPluginFactory() -> *mut c_void {
-    {
-        if let Ok(mut file) = File::create("\\vstlog\\foo.txt") {
-            file.write_all(b"Hello, world!");
-        }
-    }
-
     if !INIT_LOGGER {
         let init = Logger::with_env_or_str("info").log_to_file().directory("/vstlog").format(opt_format).start();
 
