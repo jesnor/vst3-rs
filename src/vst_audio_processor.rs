@@ -313,6 +313,7 @@ impl IAudioProcessor for VstAudioProcessor {
         kNotImplemented
     }
 
+    // TODO: Redesign to avoid allocations
     unsafe fn process(&self, data: *mut vst3_sys::vst::ProcessData) -> tresult {
         unsafe fn create_data<'t, T>(
             data: &vst3_sys::vst::ProcessData,
